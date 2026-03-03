@@ -1,0 +1,21 @@
+services:
+  open-hive:
+    build:
+      context: .
+      dockerfile: packages/backend/Dockerfile
+    ports:
+      - "3000:3000"
+    volumes:
+      - hive-data:/app/data
+    environment:
+      PORT: 3000
+      DB_TYPE: sqlite
+      DATABASE_URL: /app/data/hive.db
+      COLLISION_SCOPE: org
+      SEMANTIC_KEYWORDS: "true"
+      SEMANTIC_EMBEDDINGS: "false"
+      SEMANTIC_LLM: "false"
+    restart: unless-stopped
+
+volumes:
+  hive-data:
