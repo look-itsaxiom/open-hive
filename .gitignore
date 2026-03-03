@@ -5,3 +5,4 @@ dist/
 *.sqlite
 .env
 .env.local
+*.tsbuildinfo
