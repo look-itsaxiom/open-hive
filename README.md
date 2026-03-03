@@ -209,6 +209,55 @@ npm run dev
 
 # Run tests
 npm run test
+
+# Run backend unit tests directly
+cd packages/backend
+node --import tsx --test src/**/*.test.ts
+```
+
+### Running Locally (without Docker)
+
+```bash
+npm install
+npm run build
+cd packages/backend
+node dist/server.js
+# Backend starts on http://localhost:3000
+```
+
+### Try It Out
+
+With the backend running, walk through a collision scenario:
+
+```bash
+# Register two developers
+curl -X POST http://localhost:3000/api/sessions/register \
+  -H 'Content-Type: application/json' \
+  -d '{"session_id":"dev-a","developer_email":"alice@team.com","developer_name":"Alice","repo":"my-app","project_path":"/code/my-app"}'
+
+curl -X POST http://localhost:3000/api/sessions/register \
+  -H 'Content-Type: application/json' \
+  -d '{"session_id":"dev-b","developer_email":"bob@team.com","developer_name":"Bob","repo":"my-app","project_path":"/code/my-app"}'
+
+# Alice modifies a file
+curl -X POST http://localhost:3000/api/signals/activity \
+  -H 'Content-Type: application/json' \
+  -d '{"session_id":"dev-a","file_path":"src/auth/login.ts","type":"file_modify"}'
+
+# Bob modifies the same file — collision detected!
+curl -X POST http://localhost:3000/api/signals/activity \
+  -H 'Content-Type: application/json' \
+  -d '{"session_id":"dev-b","file_path":"src/auth/login.ts","type":"file_modify"}'
+# Response includes: "severity": "critical"
+
+# Check who's working on what
+curl http://localhost:3000/api/sessions/active?repo=my-app
+
+# Clean up
+curl -X POST http://localhost:3000/api/sessions/end \
+  -H 'Content-Type: application/json' -d '{"session_id":"dev-a"}'
+curl -X POST http://localhost:3000/api/sessions/end \
+  -H 'Content-Type: application/json' -d '{"session_id":"dev-b"}'
 ```
 
 ### Tech Stack
@@ -218,10 +267,17 @@ npm run test
 - **Database:** SQLite with WAL mode (zero external deps)
 - **Plugin:** Claude Code hooks API, tsx
 - **Build:** Turborepo, TypeScript
+- **Testing:** Node.js test runner (26 unit tests)
 - **Deploy:** Docker (multi-stage Alpine build)
 
 ## Roadmap
 
+- [x] Three-level collision detection (L1 file, L2 directory, L3a semantic)
+- [x] Claude Code plugin (6 hooks, 4 commands)
+- [x] Docker deployment
+- [x] Session heartbeat + idle timeout
+- [x] Input validation + error handling
+- [x] Unit test suite (26 tests)
 - [ ] Web dashboard (active sessions + collision visualization)
 - [ ] MCP server (expose `hive_*` tools directly to Claude)
 - [ ] Webhook notifications (Slack, Teams)
@@ -229,7 +285,6 @@ npm run test
 - [ ] L3c LLM-based semantic comparison
 - [ ] Git provider OAuth (GitHub, Azure DevOps, GitLab)
 - [ ] PostgreSQL adapter
-- [ ] Session heartbeat + idle timeout
 - [ ] API authentication
 
 ## License

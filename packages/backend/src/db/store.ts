@@ -40,6 +40,8 @@ interface CollisionRow {
   resolved_by: string | null;
 }
 
+const MAX_TRACKED_ENTRIES = 200;
+
 export class HiveStore {
   constructor(private db: DatabaseSync) {}
 
@@ -81,8 +83,8 @@ export class HiveStore {
     const existing = await this.getSession(session_id);
     if (!existing) return;
 
-    const merged_files = [...new Set([...existing.files_touched, ...(updates.files_touched ?? [])])];
-    const merged_areas = [...new Set([...existing.areas, ...(updates.areas ?? [])])];
+    const merged_files = [...new Set([...existing.files_touched, ...(updates.files_touched ?? [])])].slice(-MAX_TRACKED_ENTRIES);
+    const merged_areas = [...new Set([...existing.areas, ...(updates.areas ?? [])])].slice(-MAX_TRACKED_ENTRIES);
 
     const stmt = this.db.prepare(
       `UPDATE sessions SET last_activity = ?, intent = ?, files_touched = ?, areas = ? WHERE session_id = ?`
@@ -101,6 +103,24 @@ export class HiveStore {
       `UPDATE sessions SET status = 'ended', last_activity = ? WHERE session_id = ?`
     );
     stmt.run(new Date().toISOString(), session_id);
+  }
+
+  async cleanupStaleSessions(idle_timeout_seconds: number): Promise<string[]> {
+    const cutoff = new Date(Date.now() - idle_timeout_seconds * 1000).toISOString();
+    const selectStmt = this.db.prepare(
+      `SELECT session_id FROM sessions WHERE status = 'active' AND last_activity < ?`
+    );
+    const staleRows = selectStmt.all(cutoff) as unknown as Array<{ session_id: string }>;
+    const staleIds = staleRows.map(r => r.session_id);
+
+    if (staleIds.length > 0) {
+      const updateStmt = this.db.prepare(
+        `UPDATE sessions SET status = 'ended' WHERE status = 'active' AND last_activity < ?`
+      );
+      updateStmt.run(cutoff);
+    }
+
+    return staleIds;
   }
 
   // --- Signals ---
