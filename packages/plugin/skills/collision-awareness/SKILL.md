@@ -18,7 +18,7 @@ You have Open Hive collision detection data available. Here's how to use it:
 
 ## When to Proactively Check
 
-Before making significant changes (editing multiple files, refactoring, creating new modules), use the `hive_check_conflicts` MCP tool if available to verify no one else is working in the same area.
+Before making significant changes (editing multiple files, refactoring, creating new modules), use the `/hive status` command to check if anyone else is working in the same area.
 
 ## How to Present Collisions
 
@@ -29,7 +29,11 @@ Be natural and helpful, not alarming:
 
 ## Resolving Collisions
 
-If the user says they've talked to the other developer and it's fine, use `hive_resolve_collision` to clear the alert.
+If the user says they've talked to the other developer and it's fine, you can resolve the alert by calling the backend API directly via Bash:
+```
+curl -X POST <backend_url>/api/conflicts/resolve -H 'Content-Type: application/json' -d '{"collision_id":"<id>","resolved_by":"<email>"}'
+```
+Read `~/.open-hive.yaml` to get the backend URL and identity.
 
 ## If Backend Is Unavailable
 

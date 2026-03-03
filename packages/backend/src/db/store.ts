@@ -119,12 +119,24 @@ export class HiveStore {
     repo?: string; file_path?: string; area?: string; since?: string; limit?: number;
   }): Promise<Signal[]> {
     const limit = opts.limit ?? 50;
-    const stmt = this.db.prepare(
-      `SELECT s.* FROM signals s
-       INNER JOIN sessions sess ON s.session_id = sess.session_id
-       ORDER BY s.timestamp DESC LIMIT ?`
-    );
-    const rows = stmt.all(limit) as unknown as SignalRow[];
+    let rows: SignalRow[];
+
+    if (opts.repo) {
+      const stmt = this.db.prepare(
+        `SELECT s.* FROM signals s
+         INNER JOIN sessions sess ON s.session_id = sess.session_id
+         WHERE sess.repo = ?
+         ORDER BY s.timestamp DESC LIMIT ?`
+      );
+      rows = stmt.all(opts.repo, limit) as unknown as SignalRow[];
+    } else {
+      const stmt = this.db.prepare(
+        `SELECT s.* FROM signals s
+         INNER JOIN sessions sess ON s.session_id = sess.session_id
+         ORDER BY s.timestamp DESC LIMIT ?`
+      );
+      rows = stmt.all(limit) as unknown as SignalRow[];
+    }
 
     return rows
       .map(r => this.rowToSignal(r))

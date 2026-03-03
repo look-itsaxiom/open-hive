@@ -18,7 +18,7 @@ export interface HiveBackendConfig {
     url: string;
   };
   collision: {
-    scope: 'repo' | 'team' | 'org';
+    scope: 'repo' | 'org';
     semantic: {
       keywords_enabled: boolean;
       embeddings_enabled: boolean;

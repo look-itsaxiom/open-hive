@@ -8,7 +8,7 @@ export function loadConfig(): HiveBackendConfig {
       url: process.env.DATABASE_URL ?? './data/hive.db',
     },
     collision: {
-      scope: (process.env.COLLISION_SCOPE as 'repo' | 'team' | 'org') ?? 'org',
+      scope: (process.env.COLLISION_SCOPE as 'repo' | 'org') ?? 'org',
       semantic: {
         keywords_enabled: process.env.SEMANTIC_KEYWORDS !== 'false',
         embeddings_enabled: process.env.SEMANTIC_EMBEDDINGS === 'true',

@@ -113,14 +113,25 @@ async function handlePostToolUse(input: HookInput): Promise<Record<string, unkno
   return {};
 }
 
+async function handleSessionEnd(input: HookInput): Promise<Record<string, unknown>> {
+  if (!client) return {};
+  await client.endSession({ session_id: getSessionId(input) });
+  return {};
+}
+
 async function handlePreCompact(input: HookInput): Promise<Record<string, unknown>> {
   if (!client) return {};
-  const session_id = getSessionId(input);
   const repo = getRepo(input);
-  const result = await client.checkConflicts(session_id, '', repo);
-  if (!result || !result.has_conflicts) return {};
+  const result = await client.listActive(repo);
+  if (!result || result.sessions.length === 0) return {};
+  const session_id = getSessionId(input);
+  const others = result.sessions.filter(s => s.session_id !== session_id);
+  if (others.length === 0) return {};
+  const lines = others.map(s =>
+    `- ${s.developer_name}: ${s.intent ?? 'no intent'} (areas: ${s.areas?.join(', ') || 'none'})`
+  );
   return {
-    systemMessage: `Open Hive collision state (preserve across compaction):\n${formatCollisions(result.collisions)}`,
+    systemMessage: `Open Hive: Active sessions in this repo (preserve across compaction):\n${lines.join('\n')}`,
   };
 }
 
@@ -154,6 +165,9 @@ async function main() {
       break;
     case 'PostToolUse':
       result = await handlePostToolUse(input);
+      break;
+    case 'SessionEnd':
+      result = await handleSessionEnd(input);
       break;
     case 'PreCompact':
       result = await handlePreCompact(input);

@@ -13,19 +13,34 @@ export class CollisionEngine {
       this.config.collision.scope === 'repo' ? repo : undefined
     );
     const others = activeSessions.filter(s => s.session_id !== session_id);
+    const existing = await this.store.getActiveCollisions();
     const collisions: Collision[] = [];
 
     for (const other of others) {
+      const pairIds = [session_id, other.session_id].sort();
+
       // L1: Exact file match
       if (other.files_touched.includes(file_path)) {
-        const collision = await this.store.createCollision({
-          session_ids: [session_id, other.session_id],
-          type: 'file',
-          severity: 'critical',
-          details: `Both sessions modifying ${file_path} in ${repo}`,
-          detected_at: new Date().toISOString(),
-        });
-        collisions.push(collision);
+        const alreadyExists = existing.some(
+          c => c.type === 'file' &&
+               c.session_ids.sort().join(',') === pairIds.join(',') &&
+               c.details.includes(file_path)
+        );
+        if (!alreadyExists) {
+          const collision = await this.store.createCollision({
+            session_ids: pairIds,
+            type: 'file',
+            severity: 'critical',
+            details: `Both sessions modifying ${file_path} in ${repo}`,
+            detected_at: new Date().toISOString(),
+          });
+          collisions.push(collision);
+        } else {
+          collisions.push(...existing.filter(
+            c => c.type === 'file' && c.details.includes(file_path) &&
+                 c.session_ids.sort().join(',') === pairIds.join(',')
+          ));
+        }
         continue;
       }
 
@@ -33,14 +48,21 @@ export class CollisionEngine {
       const dir = dirname(file_path);
       const otherDirs = other.files_touched.map(f => dirname(f));
       if (otherDirs.includes(dir)) {
-        const collision = await this.store.createCollision({
-          session_ids: [session_id, other.session_id],
-          type: 'directory',
-          severity: 'warning',
-          details: `Both sessions working in ${dir}/ in ${repo}`,
-          detected_at: new Date().toISOString(),
-        });
-        collisions.push(collision);
+        const alreadyExists = existing.some(
+          c => c.type === 'directory' &&
+               c.session_ids.sort().join(',') === pairIds.join(',') &&
+               c.details.includes(dir)
+        );
+        if (!alreadyExists) {
+          const collision = await this.store.createCollision({
+            session_ids: pairIds,
+            type: 'directory',
+            severity: 'warning',
+            details: `Both sessions working in ${dir}/ in ${repo}`,
+            detected_at: new Date().toISOString(),
+          });
+          collisions.push(collision);
+        }
       }
     }
 
