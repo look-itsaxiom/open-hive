@@ -1,17 +1,15 @@
-import Database from 'better-sqlite3';
-import { drizzle } from 'drizzle-orm/better-sqlite3';
-import * as schema from './schema.js';
+import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export function createSQLiteDB(dbPath: string) {
+export function createSQLiteDB(dbPath: string): DatabaseSync {
   mkdirSync(dirname(dbPath), { recursive: true });
-  const sqlite = new Database(dbPath);
-  sqlite.pragma('journal_mode = WAL');
-  sqlite.pragma('foreign_keys = ON');
+  const db = new DatabaseSync(dbPath);
+  db.exec('PRAGMA journal_mode = WAL');
+  db.exec('PRAGMA foreign_keys = ON');
 
   // Auto-create tables on startup
-  sqlite.exec(`
+  db.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
       session_id TEXT PRIMARY KEY,
       developer_email TEXT NOT NULL,
@@ -59,6 +57,5 @@ export function createSQLiteDB(dbPath: string) {
     CREATE INDEX IF NOT EXISTS idx_collisions_resolved ON collisions(resolved);
   `);
 
-  const db = drizzle(sqlite, { schema });
   return db;
 }

@@ -1,45 +1,75 @@
-import { eq, and, desc } from 'drizzle-orm';
+import type { DatabaseSync } from 'node:sqlite';
 import { nanoid } from 'nanoid';
-import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
-import * as schema from './schema.js';
 import type {
   Session, Signal, Collision, CollisionSeverity, CollisionType,
   SignalType, SessionStatus,
 } from '@open-hive/shared';
 
-type DB = BetterSQLite3Database<typeof schema>;
+interface SessionRow {
+  session_id: string;
+  developer_email: string;
+  developer_name: string;
+  repo: string;
+  project_path: string;
+  started_at: string;
+  last_activity: string;
+  status: string;
+  intent: string | null;
+  files_touched: string;
+  areas: string;
+}
+
+interface SignalRow {
+  signal_id: string;
+  session_id: string;
+  timestamp: string;
+  type: string;
+  content: string;
+  file_path: string | null;
+  semantic_area: string | null;
+}
+
+interface CollisionRow {
+  collision_id: string;
+  session_ids: string;
+  type: string;
+  severity: string;
+  details: string;
+  detected_at: string;
+  resolved: number;
+  resolved_by: string | null;
+}
 
 export class HiveStore {
-  constructor(private db: DB) {}
+  constructor(private db: DatabaseSync) {}
 
   // --- Sessions ---
 
   async createSession(s: Omit<Session, 'last_activity' | 'status' | 'files_touched' | 'areas'>): Promise<Session> {
     const now = new Date().toISOString();
-    const session: typeof schema.sessions.$inferInsert = {
-      ...s,
-      last_activity: now,
-      status: 'active',
-      files_touched: '[]',
-      areas: '[]',
-    };
-    this.db.insert(schema.sessions).values(session).run();
+    const stmt = this.db.prepare(
+      `INSERT INTO sessions (session_id, developer_email, developer_name, repo, project_path, started_at, last_activity, status, intent, files_touched, areas)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, '[]', '[]')`
+    );
+    stmt.run(s.session_id, s.developer_email, s.developer_name, s.repo, s.project_path, s.started_at, now, s.intent ?? null);
     return this.getSession(s.session_id) as Promise<Session>;
   }
 
   async getSession(session_id: string): Promise<Session | null> {
-    const row = this.db.select().from(schema.sessions)
-      .where(eq(schema.sessions.session_id, session_id))
-      .get();
+    const stmt = this.db.prepare('SELECT * FROM sessions WHERE session_id = ?');
+    const row = stmt.get(session_id) as unknown as SessionRow | undefined;
     return row ? this.rowToSession(row) : null;
   }
 
   async getActiveSessions(repo?: string): Promise<Session[]> {
-    const conditions = [eq(schema.sessions.status, 'active')];
-    if (repo) conditions.push(eq(schema.sessions.repo, repo));
-    const rows = this.db.select().from(schema.sessions)
-      .where(and(...conditions))
-      .all();
+    let rows: SessionRow[];
+    if (repo) {
+      const stmt = this.db.prepare('SELECT * FROM sessions WHERE status = ? AND repo = ?');
+      rows = stmt.all('active', repo) as unknown as SessionRow[];
+    } else {
+      const stmt = this.db.prepare('SELECT * FROM sessions WHERE status = ?');
+      rows = stmt.all('active') as unknown as SessionRow[];
+    }
     return rows.map(r => this.rowToSession(r));
   }
 
@@ -54,45 +84,50 @@ export class HiveStore {
     const merged_files = [...new Set([...existing.files_touched, ...(updates.files_touched ?? [])])];
     const merged_areas = [...new Set([...existing.areas, ...(updates.areas ?? [])])];
 
-    this.db.update(schema.sessions)
-      .set({
-        last_activity: new Date().toISOString(),
-        intent: updates.intent ?? existing.intent,
-        files_touched: JSON.stringify(merged_files),
-        areas: JSON.stringify(merged_areas),
-      })
-      .where(eq(schema.sessions.session_id, session_id))
-      .run();
+    const stmt = this.db.prepare(
+      `UPDATE sessions SET last_activity = ?, intent = ?, files_touched = ?, areas = ? WHERE session_id = ?`
+    );
+    stmt.run(
+      new Date().toISOString(),
+      updates.intent ?? existing.intent ?? null,
+      JSON.stringify(merged_files),
+      JSON.stringify(merged_areas),
+      session_id,
+    );
   }
 
   async endSession(session_id: string): Promise<void> {
-    this.db.update(schema.sessions)
-      .set({ status: 'ended', last_activity: new Date().toISOString() })
-      .where(eq(schema.sessions.session_id, session_id))
-      .run();
+    const stmt = this.db.prepare(
+      `UPDATE sessions SET status = 'ended', last_activity = ? WHERE session_id = ?`
+    );
+    stmt.run(new Date().toISOString(), session_id);
   }
 
   // --- Signals ---
 
   async createSignal(s: Omit<Signal, 'signal_id'>): Promise<Signal> {
     const signal_id = nanoid();
-    this.db.insert(schema.signals).values({ ...s, signal_id }).run();
+    const stmt = this.db.prepare(
+      `INSERT INTO signals (signal_id, session_id, timestamp, type, content, file_path, semantic_area)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    );
+    stmt.run(signal_id, s.session_id, s.timestamp, s.type, s.content, s.file_path ?? null, s.semantic_area ?? null);
     return { ...s, signal_id };
   }
 
   async getRecentSignals(opts: {
     repo?: string; file_path?: string; area?: string; since?: string; limit?: number;
   }): Promise<Signal[]> {
-    const rows = this.db.select({
-      signal: schema.signals,
-    }).from(schema.signals)
-      .innerJoin(schema.sessions, eq(schema.signals.session_id, schema.sessions.session_id))
-      .orderBy(desc(schema.signals.timestamp))
-      .limit(opts.limit ?? 50)
-      .all();
+    const limit = opts.limit ?? 50;
+    const stmt = this.db.prepare(
+      `SELECT s.* FROM signals s
+       INNER JOIN sessions sess ON s.session_id = sess.session_id
+       ORDER BY s.timestamp DESC LIMIT ?`
+    );
+    const rows = stmt.all(limit) as unknown as SignalRow[];
 
     return rows
-      .map(r => r.signal as Signal)
+      .map(r => this.rowToSignal(r))
       .filter(s => {
         if (opts.file_path && s.file_path !== opts.file_path) return false;
         if (opts.area && s.file_path && !s.file_path.startsWith(opts.area)) return false;
@@ -105,38 +140,32 @@ export class HiveStore {
 
   async createCollision(c: Omit<Collision, 'collision_id' | 'resolved' | 'resolved_by'>): Promise<Collision> {
     const collision_id = nanoid();
-    this.db.insert(schema.collisions).values({
-      collision_id,
-      session_ids: JSON.stringify(c.session_ids),
-      type: c.type,
-      severity: c.severity,
-      details: c.details,
-      detected_at: c.detected_at,
-      resolved: false,
-      resolved_by: null,
-    }).run();
+    const stmt = this.db.prepare(
+      `INSERT INTO collisions (collision_id, session_ids, type, severity, details, detected_at, resolved, resolved_by)
+       VALUES (?, ?, ?, ?, ?, ?, 0, NULL)`
+    );
+    stmt.run(collision_id, JSON.stringify(c.session_ids), c.type, c.severity, c.details, c.detected_at);
     return { ...c, collision_id, resolved: false, resolved_by: null };
   }
 
   async getActiveCollisions(session_id?: string): Promise<Collision[]> {
-    const rows = this.db.select().from(schema.collisions)
-      .where(eq(schema.collisions.resolved, false))
-      .all();
+    const stmt = this.db.prepare('SELECT * FROM collisions WHERE resolved = 0');
+    const rows = stmt.all() as unknown as CollisionRow[];
     return rows
       .map(r => this.rowToCollision(r))
       .filter(c => !session_id || c.session_ids.includes(session_id));
   }
 
   async resolveCollision(collision_id: string, resolved_by: string): Promise<void> {
-    this.db.update(schema.collisions)
-      .set({ resolved: true, resolved_by })
-      .where(eq(schema.collisions.collision_id, collision_id))
-      .run();
+    const stmt = this.db.prepare(
+      `UPDATE collisions SET resolved = 1, resolved_by = ? WHERE collision_id = ?`
+    );
+    stmt.run(resolved_by, collision_id);
   }
 
   // --- Helpers ---
 
-  private rowToSession(row: typeof schema.sessions.$inferSelect): Session {
+  private rowToSession(row: SessionRow): Session {
     return {
       ...row,
       status: row.status as SessionStatus,
@@ -145,12 +174,20 @@ export class HiveStore {
     };
   }
 
-  private rowToCollision(row: typeof schema.collisions.$inferSelect): Collision {
+  private rowToSignal(row: SignalRow): Signal {
+    return {
+      ...row,
+      type: row.type as SignalType,
+    };
+  }
+
+  private rowToCollision(row: CollisionRow): Collision {
     return {
       ...row,
       session_ids: JSON.parse(row.session_ids),
       type: row.type as CollisionType,
       severity: row.severity as CollisionSeverity,
+      resolved: Boolean(row.resolved),
     };
   }
 }

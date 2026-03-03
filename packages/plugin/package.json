@@ -11,6 +11,7 @@
     "@open-hive/shared": "*"
   },
   "devDependencies": {
+    "@types/node": "^25.3.3",
     "tsx": "^4"
   }
 }

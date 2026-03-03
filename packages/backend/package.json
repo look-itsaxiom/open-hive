@@ -14,15 +14,11 @@
   "dependencies": {
     "@open-hive/shared": "*",
     "fastify": "^5",
-    "better-sqlite3": "^11",
-    "drizzle-orm": "^0.38",
     "nanoid": "^5",
     "@fastify/cors": "^10",
     "@fastify/static": "^8"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7",
-    "tsx": "^4",
-    "drizzle-kit": "^0.30"
+    "tsx": "^4"
   }
 }

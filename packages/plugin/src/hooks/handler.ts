@@ -136,7 +136,7 @@ async function main() {
   try {
     input = JSON.parse(raw);
   } catch {
-    process.exit(0);
+    return;
   }
 
   const event = input.hook_event_name ?? '';
