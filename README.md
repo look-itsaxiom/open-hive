@@ -31,7 +31,7 @@ Open Hive solves this by treating developer intent as a first-class signal. Ever
 | **L2** | Directory | `warning` | Two sessions modifying files in the same directory. Natural proxy for "area of code." |
 | **L3a** | Semantic | `info` | Keyword extraction from developer prompts + Jaccard similarity (threshold: 0.3). Free, no API calls. |
 
-L3b (embedding similarity) and L3c (LLM comparison) are designed but not yet enabled — the architecture supports plugging them in when needed.
+L3b (embedding similarity) and L3c (LLM comparison) are available as installable skills — add them when your team needs deeper semantic analysis.
 
 ### Collision Scope
 
@@ -69,6 +69,7 @@ open-hive/
 │   ├── backend/      # Fastify API server + collision engine
 │   ├── plugin/       # Claude Code plugin (hooks, commands, client)
 │   └── shared/       # TypeScript types and API contracts
+├── skills/           # 12 integration skills (see Skills Library below)
 ├── docker-compose.yaml
 └── turbo.json
 ```
@@ -168,6 +169,48 @@ The plugin registers six hooks that run automatically during your Claude Code se
 | `GET` | `/api/history` | Query recent signals (filter by file, area, repo) |
 | `GET` | `/api/health` | Server health check |
 
+## Skills Library
+
+Open Hive uses a **skills-based extensibility model**. Instead of shipping every integration as built-in code, each capability is a self-contained `SKILL.md` that teaches Claude Code how to add it to your installation. Run a skill, and Claude modifies your backend with the integration, tests, and configuration — tailored to your setup.
+
+### Available Skills
+
+| Skill | Category | What It Adds |
+|-------|----------|--------------|
+| **[Slack](skills/add-slack/)** | Notifications | Block Kit webhook alerts with severity filtering |
+| **[Teams](skills/add-teams/)** | Notifications | Adaptive Card webhook alerts |
+| **[Discord](skills/add-discord/)** | Notifications | Discord embed webhook alerts |
+| **[GitHub OAuth](skills/add-github-oauth/)** | Auth | GitHub OAuth flow, org/team discovery, JWT sessions |
+| **[GitLab OAuth](skills/add-gitlab-oauth/)** | Auth | GitLab OAuth flow, self-hosted support |
+| **[Azure DevOps OAuth](skills/add-azure-devops-oauth/)** | Auth | Microsoft Entra ID OAuth, token refresh |
+| **[PostgreSQL](skills/add-postgres/)** | Storage | Swap SQLite for PostgreSQL with migrations |
+| **[Web Dashboard](skills/add-dashboard/)** | UI | Embedded htmx dashboard for sessions and collisions |
+| **[MCP Server](skills/add-mcp-server/)** | Plugin | 6 `hive_*` MCP tools for direct Claude integration |
+| **[L3b Embeddings](skills/add-embedding-l3b/)** | Detection | Cosine similarity via OpenAI/Ollama embeddings |
+| **[L3c LLM](skills/add-llm-l3c/)** | Detection | LLM-based semantic overlap analysis |
+| **[Build Your Own](skills/build-skill/)** | Meta | Guide for creating custom integration skills |
+
+### Using a Skill
+
+Each skill is a step-by-step guide. Point Claude at it and it handles the rest:
+
+```
+Read skills/add-slack/SKILL.md and apply it to this project.
+```
+
+Claude will create the formatter, add environment config, wire it into the server, write tests, and verify the build. See [`skills/README.md`](skills/README.md) for details.
+
+### Extension Points
+
+Skills plug into four core extension points in the backend:
+
+| Extension Point | Interface | Skills |
+|-----------------|-----------|--------|
+| **Notification Formatters** | `NotificationFormatter` | Slack, Teams, Discord |
+| **Auth Adapters** | `authenticate` / `requireAuth` middleware | GitHub, GitLab, Azure DevOps OAuth |
+| **Store Adapters** | `IHiveStore` | PostgreSQL |
+| **Collision Tiers** | Collision engine hooks | L3b Embeddings, L3c LLM |
+
 ## Configuration
 
 ### Backend (Environment Variables)
@@ -179,8 +222,10 @@ The plugin registers six hooks that run automatically during your Claude Code se
 | `DATABASE_URL` | `/app/data/hive.db` | Database path or connection string |
 | `COLLISION_SCOPE` | `org` | Collision scope (`repo` or `org`) |
 | `SEMANTIC_KEYWORDS` | `true` | Enable L3a keyword overlap detection |
-| `SEMANTIC_EMBEDDINGS` | `false` | Enable L3b embedding similarity |
-| `SEMANTIC_LLM` | `false` | Enable L3c LLM comparison |
+| `SEMANTIC_EMBEDDINGS` | `false` | Enable L3b embedding similarity (requires skill) |
+| `SEMANTIC_LLM` | `false` | Enable L3c LLM comparison (requires skill) |
+| `WEBHOOK_URLS` | — | Comma-separated webhook URLs for generic notifications |
+| `WEBHOOK_MIN_SEVERITY` | `info` | Minimum severity for generic webhooks |
 
 ### Client (`~/.open-hive.yaml`)
 
@@ -267,7 +312,7 @@ curl -X POST http://localhost:3000/api/sessions/end \
 - **Database:** SQLite with WAL mode (zero external deps)
 - **Plugin:** Claude Code hooks API, tsx
 - **Build:** Turborepo, TypeScript
-- **Testing:** Node.js test runner (26 unit tests)
+- **Testing:** Node.js test runner (40 unit tests)
 - **Deploy:** Docker (multi-stage Alpine build)
 
 ## Roadmap
@@ -277,15 +322,20 @@ curl -X POST http://localhost:3000/api/sessions/end \
 - [x] Docker deployment
 - [x] Session heartbeat + idle timeout
 - [x] Input validation + error handling
-- [x] Unit test suite (26 tests)
-- [ ] Web dashboard (active sessions + collision visualization)
-- [ ] MCP server (expose `hive_*` tools directly to Claude)
-- [ ] Webhook notifications (Slack, Teams)
-- [ ] L3b embedding similarity (cosine distance)
-- [ ] L3c LLM-based semantic comparison
-- [ ] Git provider OAuth (GitHub, Azure DevOps, GitLab)
-- [ ] PostgreSQL adapter
-- [ ] API authentication
+- [x] Unit test suite (40 tests)
+- [x] Pluggable notification dispatcher with formatter interface
+- [x] Store adapter interface (`IHiveStore`)
+- [x] Auth middleware extension point
+- [x] Skills library (12 integration skills, 12,180 lines)
+  - [x] Notifications: Slack, Teams, Discord
+  - [x] Auth: GitHub OAuth, GitLab OAuth, Azure DevOps OAuth
+  - [x] Storage: PostgreSQL
+  - [x] UI: Web Dashboard
+  - [x] Plugin: MCP Server
+  - [x] Detection: L3b Embedding Similarity, L3c LLM Comparison
+  - [x] Meta: Build-Skill guide
+- [ ] Claude Code marketplace publication
+- [ ] Community-contributed skills
 
 ## License
 
