@@ -3,6 +3,8 @@ import cors from '@fastify/cors';
 import { loadConfig } from './env.js';
 import { createStore } from './db/index.js';
 import { CollisionEngine } from './services/collision-engine.js';
+import { NotificationDispatcher } from './services/notification-dispatcher.js';
+import { authenticate } from './middleware/auth.js';
 import { sessionRoutes } from './routes/sessions.js';
 import { signalRoutes } from './routes/signals.js';
 import { conflictRoutes } from './routes/conflicts.js';
@@ -11,16 +13,18 @@ import { historyRoutes } from './routes/history.js';
 const config = loadConfig();
 const store = createStore(config);
 const engine = new CollisionEngine(store, config);
+const dispatcher = new NotificationDispatcher(config.webhooks.urls);
 
 const app = Fastify({ logger: true });
 
 await app.register(cors, { origin: true });
+app.addHook('preHandler', authenticate);
 
-app.get('/api/health', async () => ({ status: 'ok', version: '0.1.0' }));
+app.get('/api/health', async () => ({ status: 'ok', version: '0.2.0' }));
 
-sessionRoutes(app, store, engine);
-signalRoutes(app, store, engine);
-conflictRoutes(app, store, engine);
+sessionRoutes(app, store, engine, dispatcher);
+signalRoutes(app, store, engine, dispatcher);
+conflictRoutes(app, store, engine, dispatcher);
 historyRoutes(app, store);
 
 // Periodic cleanup of stale sessions

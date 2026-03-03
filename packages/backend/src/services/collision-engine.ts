@@ -1,10 +1,10 @@
 import { dirname } from 'node:path';
-import type { HiveStore } from '../db/store.js';
+import type { IHiveStore } from '../db/store.js';
 import type { Collision, HiveBackendConfig } from '@open-hive/shared';
 
 export class CollisionEngine {
   constructor(
-    private store: HiveStore,
+    private store: IHiveStore,
     private config: HiveBackendConfig,
   ) {}
 

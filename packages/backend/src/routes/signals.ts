@@ -1,10 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import { dirname } from 'node:path';
-import type { HiveStore } from '../db/store.js';
+import type { IHiveStore } from '../db/store.js';
 import type { CollisionEngine } from '../services/collision-engine.js';
+import type { NotificationDispatcher } from '../services/notification-dispatcher.js';
 import type { IntentSignalRequest, IntentSignalResponse, ActivitySignalRequest, ActivitySignalResponse } from '@open-hive/shared';
 
-export function signalRoutes(app: FastifyInstance, store: HiveStore, engine: CollisionEngine) {
+export function signalRoutes(app: FastifyInstance, store: IHiveStore, engine: CollisionEngine, dispatcher: NotificationDispatcher) {
   app.post<{ Body: IntentSignalRequest }>('/api/signals/intent', async (req, reply) => {
     try {
       const { session_id, content, type } = req.body ?? {};
@@ -34,6 +35,20 @@ export function signalRoutes(app: FastifyInstance, store: HiveStore, engine: Col
       await store.updateSessionActivity(session_id, { intent: content });
 
       const collisions = await engine.checkIntentCollision(session_id, content, session.repo);
+
+      for (const collision of collisions) {
+        const sessionData = await Promise.all(
+          collision.session_ids.map(id => store.getSession(id))
+        );
+        const sessions = sessionData.filter(Boolean).map(s => ({
+          developer_name: s!.developer_name,
+          developer_email: s!.developer_email,
+          repo: s!.repo,
+          intent: s!.intent,
+        }));
+        dispatcher.notify('collision_detected', collision, sessions);
+      }
+
       return { ok: true, collisions } satisfies IntentSignalResponse;
     } catch (err) {
       req.log.error(err, 'Failed to process intent signal');
@@ -86,6 +101,19 @@ export function signalRoutes(app: FastifyInstance, store: HiveStore, engine: Col
       let collisions: Awaited<ReturnType<CollisionEngine['checkFileCollision']>> = [];
       if (type === 'file_modify') {
         collisions = await engine.checkFileCollision(session_id, file_path, session.repo);
+
+        for (const collision of collisions) {
+          const sessionData = await Promise.all(
+            collision.session_ids.map(id => store.getSession(id))
+          );
+          const sessions = sessionData.filter(Boolean).map(s => ({
+            developer_name: s!.developer_name,
+            developer_email: s!.developer_email,
+            repo: s!.repo,
+            intent: s!.intent,
+          }));
+          dispatcher.notify('collision_detected', collision, sessions);
+        }
       }
 
       return { ok: true, collisions } satisfies ActivitySignalResponse;

@@ -1,9 +1,10 @@
 import type { FastifyInstance } from 'fastify';
-import type { HiveStore } from '../db/store.js';
+import type { IHiveStore } from '../db/store.js';
 import type { CollisionEngine } from '../services/collision-engine.js';
+import type { NotificationDispatcher } from '../services/notification-dispatcher.js';
 import type { RegisterSessionRequest, RegisterSessionResponse, EndSessionRequest } from '@open-hive/shared';
 
-export function sessionRoutes(app: FastifyInstance, store: HiveStore, engine: CollisionEngine) {
+export function sessionRoutes(app: FastifyInstance, store: IHiveStore, engine: CollisionEngine, dispatcher: NotificationDispatcher) {
   app.post<{ Body: RegisterSessionRequest }>('/api/sessions/register', async (req, reply) => {
     try {
       const { session_id, developer_email, developer_name, repo, project_path } = req.body ?? {};

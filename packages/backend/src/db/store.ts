@@ -42,7 +42,27 @@ interface CollisionRow {
 
 const MAX_TRACKED_ENTRIES = 200;
 
-export class HiveStore {
+export interface IHiveStore {
+  createSession(s: Omit<Session, 'last_activity' | 'status' | 'files_touched' | 'areas'>): Promise<Session>;
+  getSession(session_id: string): Promise<Session | null>;
+  getActiveSessions(repo?: string): Promise<Session[]>;
+  updateSessionActivity(session_id: string, updates: {
+    intent?: string;
+    files_touched?: string[];
+    areas?: string[];
+  }): Promise<void>;
+  endSession(session_id: string): Promise<void>;
+  cleanupStaleSessions(idle_timeout_seconds: number): Promise<string[]>;
+  createSignal(s: Omit<Signal, 'signal_id'>): Promise<Signal>;
+  getRecentSignals(opts: {
+    repo?: string; file_path?: string; area?: string; since?: string; limit?: number;
+  }): Promise<Signal[]>;
+  createCollision(c: Omit<Collision, 'collision_id' | 'resolved' | 'resolved_by'>): Promise<Collision>;
+  getActiveCollisions(session_id?: string): Promise<Collision[]>;
+  resolveCollision(collision_id: string, resolved_by: string): Promise<void>;
+}
+
+export class HiveStore implements IHiveStore {
   constructor(private db: DatabaseSync) {}
 
   // --- Sessions ---
