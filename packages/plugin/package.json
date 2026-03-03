@@ -1,0 +1,16 @@
+{
+  "name": "@open-hive/plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@open-hive/shared": "*"
+  },
+  "devDependencies": {
+    "tsx": "^4"
+  }
+}
