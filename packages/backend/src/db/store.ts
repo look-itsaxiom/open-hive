@@ -42,6 +42,15 @@ interface CollisionRow {
 
 const MAX_TRACKED_ENTRIES = 200;
 
+export interface HistoricalIntent {
+  session_id: string;
+  developer_name: string;
+  developer_email: string;
+  repo: string;
+  intent: string;
+  timestamp: string;
+}
+
 export interface IHiveStore {
   createSession(s: Omit<Session, 'last_activity' | 'status' | 'files_touched' | 'areas'>): Promise<Session>;
   getSession(session_id: string): Promise<Session | null>;
@@ -57,6 +66,9 @@ export interface IHiveStore {
   getRecentSignals(opts: {
     repo?: string; file_path?: string; area?: string; since?: string; limit?: number;
   }): Promise<Signal[]>;
+  getRecentIntents(opts: {
+    repo?: string; exclude_session_id?: string; since?: string; limit?: number;
+  }): Promise<HistoricalIntent[]>;
   createCollision(c: Omit<Collision, 'collision_id' | 'resolved' | 'resolved_by'>): Promise<Collision>;
   getActiveCollisions(session_id?: string): Promise<Collision[]>;
   resolveCollision(collision_id: string, resolved_by: string): Promise<void>;
@@ -186,6 +198,36 @@ export class HiveStore implements IHiveStore {
         if (opts.since && s.timestamp < opts.since) return false;
         return true;
       });
+  }
+
+  async getRecentIntents(opts: {
+    repo?: string; exclude_session_id?: string; since?: string; limit?: number;
+  }): Promise<HistoricalIntent[]> {
+    const limit = opts.limit ?? 100;
+    const since = opts.since ?? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const conditions = [`s.type = 'prompt'`, `s.timestamp > ?`];
+    const params: unknown[] = [since];
+
+    if (opts.repo) {
+      conditions.push(`sess.repo = ?`);
+      params.push(opts.repo);
+    }
+    if (opts.exclude_session_id) {
+      conditions.push(`s.session_id != ?`);
+      params.push(opts.exclude_session_id);
+    }
+
+    params.push(limit);
+
+    const sql = `SELECT DISTINCT s.session_id, sess.developer_name, sess.developer_email, sess.repo, s.content AS intent, s.timestamp
+      FROM signals s
+      INNER JOIN sessions sess ON s.session_id = sess.session_id
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY s.timestamp DESC LIMIT ?`;
+
+    const stmt = this.db.prepare(sql);
+    const rows = stmt.all(...params as string[]) as unknown as HistoricalIntent[];
+    return rows;
   }
 
   // --- Collisions ---

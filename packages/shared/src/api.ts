@@ -12,10 +12,17 @@ export interface RegisterSessionRequest {
   project_path: string;
 }
 
+export interface RecentHistoricalIntent {
+  developer_name: string;
+  intent: string;
+  timestamp: string;
+}
+
 export interface RegisterSessionResponse {
   ok: boolean;
   active_collisions: Collision[];
   active_sessions_in_repo: Pick<Session, 'session_id' | 'developer_name' | 'intent' | 'areas'>[];
+  recent_historical_intents: RecentHistoricalIntent[];
 }
 
 export interface HeartbeatRequest {

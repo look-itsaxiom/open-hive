@@ -34,7 +34,11 @@ export function signalRoutes(app: FastifyInstance, store: IHiveStore, engine: Co
 
       await store.updateSessionActivity(session_id, { intent: content });
 
-      const collisions = await engine.checkIntentCollision(session_id, content, session.repo);
+      const [liveCollisions, historicalCollisions] = await Promise.all([
+        engine.checkIntentCollision(session_id, content, session.repo),
+        engine.checkHistoricalIntentCollision(session_id, content, session.repo),
+      ]);
+      const collisions = [...liveCollisions, ...historicalCollisions];
 
       for (const collision of collisions) {
         const sessionData = await Promise.all(

@@ -1,5 +1,5 @@
 import { dirname } from 'node:path';
-import type { IHiveStore } from '../db/store.js';
+import type { IHiveStore, HistoricalIntent } from '../db/store.js';
 import type { Collision, HiveBackendConfig } from '@open-hive/shared';
 
 export class CollisionEngine {
@@ -94,6 +94,63 @@ export class CollisionEngine {
 
     return collisions;
   }
+
+  async checkHistoricalIntentCollision(session_id: string, intent: string, repo: string): Promise<Collision[]> {
+    if (!this.config.collision.semantic.keywords_enabled) return [];
+
+    const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const recentIntents = await this.store.getRecentIntents({
+      repo: this.config.collision.scope === 'repo' ? repo : undefined,
+      exclude_session_id: session_id,
+      since,
+      limit: 200,
+    });
+
+    if (recentIntents.length === 0) return [];
+
+    // Deduplicate by session — keep only the most recent intent per session
+    const bySession = new Map<string, HistoricalIntent>();
+    for (const hi of recentIntents) {
+      if (!bySession.has(hi.session_id)) {
+        bySession.set(hi.session_id, hi);
+      }
+    }
+
+    // Filter out sessions that are still active (those are handled by checkIntentCollision)
+    const activeSessions = await this.store.getActiveSessions(
+      this.config.collision.scope === 'repo' ? repo : undefined
+    );
+    const activeIds = new Set(activeSessions.map(s => s.session_id));
+
+    const collisions: Collision[] = [];
+
+    for (const [otherSessionId, hi] of bySession) {
+      if (activeIds.has(otherSessionId)) continue; // skip active — already checked by checkIntentCollision
+
+      const score = keywordOverlap(intent, hi.intent);
+      if (score < 0.3) continue;
+
+      const collision = await this.store.createCollision({
+        session_ids: [session_id, otherSessionId],
+        type: 'semantic',
+        severity: 'warning',
+        details: `Historical overlap: "${truncate(intent, 60)}" vs "${truncate(hi.intent, 60)}" (${hi.developer_name}, ${timeSince(hi.timestamp)} ago, score: ${score.toFixed(2)})`,
+        detected_at: new Date().toISOString(),
+      });
+      collisions.push(collision);
+    }
+
+    return collisions;
+  }
+}
+
+function timeSince(isoTimestamp: string): string {
+  const diff = Date.now() - new Date(isoTimestamp).getTime();
+  const hours = Math.floor(diff / (1000 * 60 * 60));
+  if (hours < 1) return '<1h';
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `${days}d`;
 }
 
 const STOP_WORDS = new Set([

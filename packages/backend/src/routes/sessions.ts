@@ -26,8 +26,15 @@ export function sessionRoutes(app: FastifyInstance, store: IHiveStore, engine: C
         intent: null,
       });
 
-      const active_collisions = await store.getActiveCollisions(session_id);
-      const active_sessions_in_repo = (await store.getActiveSessions(repo))
+      const since48h = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+
+      const [active_collisions, activeSessions, recentIntents] = await Promise.all([
+        store.getActiveCollisions(session_id),
+        store.getActiveSessions(repo),
+        store.getRecentIntents({ repo, exclude_session_id: session_id, since: since48h, limit: 50 }),
+      ]);
+
+      const active_sessions_in_repo = activeSessions
         .filter(s => s.session_id !== session_id)
         .map(s => ({
           session_id: s.session_id,
@@ -36,10 +43,27 @@ export function sessionRoutes(app: FastifyInstance, store: IHiveStore, engine: C
           areas: s.areas,
         }));
 
+      // Deduplicate historical intents by session, filter out currently active ones
+      const activeIds = new Set(activeSessions.map(s => s.session_id));
+      const seen = new Set<string>();
+      const recent_historical_intents = recentIntents
+        .filter(hi => {
+          if (activeIds.has(hi.session_id)) return false;
+          if (seen.has(hi.session_id)) return false;
+          seen.add(hi.session_id);
+          return true;
+        })
+        .map(hi => ({
+          developer_name: hi.developer_name,
+          intent: hi.intent,
+          timestamp: hi.timestamp,
+        }));
+
       return {
         ok: true,
         active_collisions,
         active_sessions_in_repo,
+        recent_historical_intents,
       } satisfies RegisterSessionResponse;
     } catch (err) {
       req.log.error(err, 'Failed to register session');
