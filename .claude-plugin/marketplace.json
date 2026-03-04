@@ -1,0 +1,22 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "open-hive",
+  "version": "0.2.0",
+  "description": "Developer collision detection for AI-assisted teams",
+  "owner": {
+    "name": "Chase Skibeness"
+  },
+  "plugins": [
+    {
+      "name": "open-hive",
+      "description": "Developer collision detection — know what your team is working on before you collide",
+      "source": "./packages/plugin",
+      "category": "productivity",
+      "version": "0.2.0",
+      "author": {
+        "name": "Chase Skibeness"
+      },
+      "license": "MIT"
+    }
+  ]
+}

@@ -1,12 +1,12 @@
 {
   "name": "open-hive",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Developer collision detection — know what your team is working on before you collide",
   "author": {
     "name": "Chase Skibeness",
-    "url": "https://github.com/cskibeness"
+    "url": "https://github.com/look-itsaxiom"
   },
-  "repository": "https://github.com/cskibeness/open-hive",
+  "repository": "https://github.com/look-itsaxiom/open-hive",
   "license": "MIT",
   "keywords": ["coordination", "team", "collision-detection", "awareness"]
 }
