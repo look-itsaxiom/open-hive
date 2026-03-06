@@ -19,6 +19,13 @@ export function loadConfig(): HiveBackendConfig {
         llm_api_key: process.env.LLM_API_KEY,
       },
     },
+    alerts: {
+      min_severity: (process.env.ALERT_MIN_SEVERITY as 'info' | 'warning' | 'critical') ?? 'info',
+      webhook_urls: process.env.WEBHOOK_URLS?.split(',').filter(Boolean) ?? [],
+    },
+    identity: {
+      provider: process.env.IDENTITY_PROVIDER ?? 'passthrough',
+    },
     webhooks: {
       urls: process.env.WEBHOOK_URLS?.split(',').filter(Boolean) ?? [],
     },

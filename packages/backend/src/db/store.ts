@@ -3,7 +3,10 @@ import { nanoid } from 'nanoid';
 import type {
   Session, Signal, Collision, CollisionSeverity, CollisionType,
   SignalType, SessionStatus,
+  IHiveStore, HistoricalIntent,
 } from '@open-hive/shared';
+
+export type { IHiveStore, HistoricalIntent } from '@open-hive/shared';
 
 interface SessionRow {
   session_id: string;
@@ -41,38 +44,6 @@ interface CollisionRow {
 }
 
 const MAX_TRACKED_ENTRIES = 200;
-
-export interface HistoricalIntent {
-  session_id: string;
-  developer_name: string;
-  developer_email: string;
-  repo: string;
-  intent: string;
-  timestamp: string;
-}
-
-export interface IHiveStore {
-  createSession(s: Omit<Session, 'last_activity' | 'status' | 'files_touched' | 'areas'>): Promise<Session>;
-  getSession(session_id: string): Promise<Session | null>;
-  getActiveSessions(repo?: string): Promise<Session[]>;
-  updateSessionActivity(session_id: string, updates: {
-    intent?: string;
-    files_touched?: string[];
-    areas?: string[];
-  }): Promise<void>;
-  endSession(session_id: string): Promise<void>;
-  cleanupStaleSessions(idle_timeout_seconds: number): Promise<string[]>;
-  createSignal(s: Omit<Signal, 'signal_id'>): Promise<Signal>;
-  getRecentSignals(opts: {
-    repo?: string; file_path?: string; area?: string; since?: string; limit?: number;
-  }): Promise<Signal[]>;
-  getRecentIntents(opts: {
-    repo?: string; exclude_session_id?: string; since?: string; limit?: number;
-  }): Promise<HistoricalIntent[]>;
-  createCollision(c: Omit<Collision, 'collision_id' | 'resolved' | 'resolved_by'>): Promise<Collision>;
-  getActiveCollisions(session_id?: string): Promise<Collision[]>;
-  resolveCollision(collision_id: string, resolved_by: string): Promise<void>;
-}
 
 export class HiveStore implements IHiveStore {
   constructor(private db: DatabaseSync) {}

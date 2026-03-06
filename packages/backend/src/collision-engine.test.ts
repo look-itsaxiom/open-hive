@@ -17,6 +17,8 @@ function createTestConfig(overrides?: Partial<HiveBackendConfig>): HiveBackendCo
         llm_enabled: false,
       },
     },
+    alerts: { min_severity: 'info', webhook_urls: [] },
+    identity: { provider: 'passthrough' },
     webhooks: { urls: [] },
     session: { heartbeat_interval_seconds: 30, idle_timeout_seconds: 300 },
     ...overrides,
