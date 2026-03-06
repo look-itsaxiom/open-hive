@@ -32,12 +32,18 @@ Set these in your `docker-compose.yaml` or shell environment.
 | `LLM_PROVIDER` | -- | LLM provider name |
 | `LLM_API_KEY` | -- | API key for the LLM provider |
 
-### Webhooks
+### Alerts
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `WEBHOOK_URLS` | -- | Comma-separated webhook URLs for generic notifications |
-| `WEBHOOK_MIN_SEVERITY` | `info` | Minimum severity to trigger webhooks (`info`, `warning`, `critical`) |
+| `WEBHOOK_URLS` | -- | Comma-separated webhook URLs for generic webhook sinks |
+| `ALERT_MIN_SEVERITY` | `info` | Minimum severity for generic webhook sinks (`info`, `warning`, `critical`) |
+
+### Identity
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `IDENTITY_PROVIDER` | `passthrough` | Identity provider to use (`passthrough` trusts self-reported identity; skills provide alternatives) |
 
 ### Session Management
 
@@ -100,6 +106,13 @@ interface HiveBackendConfig {
     auth: 'oauth' | 'pat';
     token?: string;
     org?: string;
+  };
+  alerts: {
+    min_severity: 'info' | 'warning' | 'critical';
+    webhook_urls: string[];
+  };
+  identity: {
+    provider: 'passthrough' | string;
   };
   webhooks: {
     urls: string[];

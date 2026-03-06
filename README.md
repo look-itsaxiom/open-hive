@@ -81,15 +81,15 @@ Open Hive follows a [hexagonal (ports-and-adapters) architecture](docs/architect
 - [x] Docker deployment
 - [x] Session heartbeat + idle timeout
 - [x] Input validation + error handling
-- [x] Unit test suite (40 tests)
+- [x] Unit test suite (66 tests)
 - [x] Store adapter interface (`IHiveStore`)
 - [x] Skills library (12 integration skills)
 
-### Phase 2 — Core Ports (next)
-- [ ] M1: Define core port interfaces
-- [ ] M2: Refactor to ports
-- [ ] M3: Skill contract update
-- [ ] M4: L3b/L3c engine integration
+### Phase 2 — Core Ports (complete)
+- [x] M1: Define core port interfaces (`IHiveStore`, `IAlertSink`, `IIdentityProvider`, `ISemanticAnalyzer`)
+- [x] M2: Refactor to ports (`PortRegistry`, `AlertDispatcher`, `KeywordAnalyzer`, `PassthroughIdentityProvider`)
+- [x] M3: Skill contract update (all 12 skills target port interfaces)
+- [x] M4: Tier-ordered semantic analysis (L3a/L3b/L3c), severity mapping, 66 tests
 - [x] M5: Documentation decomposition
 
 ### Phase 3 — Ecosystem

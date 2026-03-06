@@ -62,7 +62,7 @@ The cleanup runs on an interval equal to `HEARTBEAT_INTERVAL` and marks any sess
 
 ## Authentication
 
-By default, the backend accepts all requests (no authentication). OAuth skills replace the built-in `authenticate` middleware with real token validation:
+By default, the backend uses `PassthroughIdentityProvider` which trusts self-reported identity from the request body (no authentication required). The `IDENTITY_PROVIDER` env var controls which provider is used. OAuth skills provide alternative `IIdentityProvider` implementations with real token validation:
 
 - [GitHub OAuth skill](../../skills/add-github-oauth/)
 - [GitLab OAuth skill](../../skills/add-gitlab-oauth/)
@@ -70,7 +70,7 @@ By default, the backend accepts all requests (no authentication). OAuth skills r
 
 ## Notifications
 
-Generic webhooks send raw JSON to configured URLs. For formatted notifications, install a notification skill:
+The `AlertDispatcher` delivers `AlertEvent` payloads to registered `IAlertSink` adapters. The built-in `GenericWebhookSink` POSTs raw JSON to configured `WEBHOOK_URLS` (filtered by `ALERT_MIN_SEVERITY`). For formatted notifications, install a notification skill:
 
 - [Slack skill](../../skills/add-slack/) -- Block Kit webhook alerts
 - [Teams skill](../../skills/add-teams/) -- Adaptive Card webhook alerts
@@ -85,5 +85,5 @@ See [config reference](../reference/config.md) for webhook-related environment v
 - **Database:** SQLite with WAL mode (zero external deps)
 - **Plugin:** Claude Code hooks API, tsx
 - **Build:** Turborepo, TypeScript
-- **Testing:** Node.js test runner (40 unit tests)
+- **Testing:** Node.js test runner (66 unit tests)
 - **Deploy:** Docker (multi-stage Alpine build)

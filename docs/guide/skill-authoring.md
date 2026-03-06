@@ -50,21 +50,17 @@ Study these skills as templates:
 
 ### Notification Skills (Alerts Port)
 
-Implement the `NotificationFormatter` interface:
+Implement the `IAlertSink` interface from `@open-hive/shared`:
 
 ```typescript
-interface NotificationFormatter {
-  name: string;
-  format(payload: WebhookPayload): {
-    url: string;
-    body: unknown;
-    headers?: Record<string, string>;
-  };
-  shouldFire(payload: WebhookPayload): boolean;
+interface IAlertSink {
+  readonly name: string;
+  shouldFire(event: AlertEvent): boolean;
+  deliver(event: AlertEvent): Promise<void>;
 }
 ```
 
-Register your formatter with the `NotificationDispatcher` in `server.ts`.
+Register your sink with the `AlertDispatcher` via `alertDispatcher.registerSink(yourSink)` in `server.ts`.
 
 ### Storage Skills (Storage Port)
 
@@ -72,11 +68,31 @@ Implement the full `IHiveStore` interface (see [ports reference](../reference/po
 
 ### Auth Skills (Identity Port)
 
-Replace the built-in `authenticate` middleware in `packages/backend/src/middleware/auth.ts`.
+Implement the `IIdentityProvider` interface from `@open-hive/shared`:
+
+```typescript
+interface IIdentityProvider {
+  readonly name: string;
+  readonly requiresAuth: boolean;
+  authenticate(ctx: AuthContext): Promise<DeveloperIdentity | null>;
+}
+```
+
+Replace the default `PassthroughIdentityProvider` in `server.ts`. The `createAuthMiddleware(provider)` in `middleware/auth.ts` delegates to whichever provider is configured. `DeveloperIdentity` is imported from `@open-hive/shared`.
 
 ### Semantic Analysis Skills (Semantic Analysis Port)
 
-Implement `ISemanticAnalyzer` and wire it into the `CollisionEngine`.
+Implement the `ISemanticAnalyzer` interface from `@open-hive/shared`:
+
+```typescript
+interface ISemanticAnalyzer {
+  readonly name: string;
+  readonly tier: 'L3a' | 'L3b' | 'L3c';
+  compare(a: string, b: string): Promise<SemanticMatch | null>;
+}
+```
+
+Add your analyzer to the `analyzers` array in `server.ts`. The `CollisionEngine` sorts analyzers by tier order (L3a, L3b, L3c) and runs them in order; the first match wins per session pair.
 
 ## Skill Checklist
 

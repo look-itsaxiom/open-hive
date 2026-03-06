@@ -9,8 +9,8 @@ Open Hive detects developer collisions at three levels, each with increasing sem
 | **L1** | File | `critical` | Two sessions modifying the same file. Zero false positives. |
 | **L2** | Directory | `warning` | Two sessions modifying files in the same directory. Natural proxy for "area of code." |
 | **L3a** | Semantic (keywords) | `info` | Keyword extraction from developer prompts + Jaccard similarity (threshold: 0.3). Free, no API calls. |
-| **L3b** | Semantic (embeddings) | -- | Cosine similarity via OpenAI/Ollama embeddings. Requires skill installation. |
-| **L3c** | Semantic (LLM) | -- | LLM-based semantic overlap analysis. Requires skill installation. |
+| **L3b** | Semantic (embeddings) | `warning` | Cosine similarity via OpenAI/Ollama embeddings. Requires skill installation. |
+| **L3c** | Semantic (LLM) | `warning` | LLM-based semantic overlap analysis. Requires skill installation. |
 
 ## Collision Scope
 
@@ -47,11 +47,13 @@ Triggered when two sessions modify files in the same directory.
 
 Triggered when two developers' prompts share significant keyword overlap.
 
-**Implementation** (`CollisionEngine.checkIntentCollision`):
-1. Extract keywords from the intent text (lowercase, remove punctuation, filter stop words, filter words <= 2 chars)
-2. For each other active session with an intent, compute Jaccard similarity
-3. Jaccard = |intersection| / |union| of keyword sets
-4. If score >= 0.3, create an `info` collision
+The `CollisionEngine` accepts an `ISemanticAnalyzer[]` and sorts them by tier order (L3a, L3b, L3c) at construction time. For each session pair, analyzers run in tier order and the first match wins. The built-in `KeywordAnalyzer` implements the L3a tier.
+
+**Implementation** (`CollisionEngine.checkIntentCollision` + `KeywordAnalyzer`):
+1. The `KeywordAnalyzer.compare()` method extracts keywords (lowercase, remove punctuation, filter stop words, filter words <= 2 chars)
+2. For each other active session with an intent, the engine calls each analyzer in tier order
+3. `KeywordAnalyzer` computes Jaccard similarity: |intersection| / |union| of keyword sets
+4. If score >= 0.3, returns a `SemanticMatch` with tier `L3a`; engine creates an `info` collision
 
 **Stop words:** Common English words plus programming verbs (`fix`, `add`, `update`, `change`, `make`, `get`, `set`, `use`, `implement`, `create`, `remove`, `delete`, `refactor`, `improve`). These are filtered out to reduce false positives.
 
@@ -72,15 +74,15 @@ In addition to live session comparison, the `checkHistoricalIntentCollision` met
 1. Fetch recent intents (up to 200) from the signal store
 2. Deduplicate by session -- keep only the most recent intent per session
 3. Filter out currently active sessions (those are handled by live detection)
-4. For each historical intent, compute Jaccard similarity
-5. If score >= 0.3, create a `warning` severity collision (higher than live L3a `info` because historical overlap may indicate uncoordinated rework)
+4. For each historical intent, run analyzers in tier order (first match wins)
+5. If a match is found, create a `warning` severity collision (higher than live L3a `info` because historical overlap may indicate uncoordinated rework)
 
 Historical collisions include the developer name and time since the original work in the details string.
 
 ## Collision Lifecycle
 
 1. **Detection** -- Collision is created in the database with `resolved: false`
-2. **Notification** -- `NotificationDispatcher` sends webhooks (if configured)
+2. **Notification** -- `AlertDispatcher` delivers to registered `IAlertSink` adapters (if configured)
 3. **Alert** -- Plugin receives the collision and injects a system message
 4. **Resolution** -- `POST /api/conflicts/resolve` marks the collision as resolved
 

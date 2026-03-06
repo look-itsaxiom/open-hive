@@ -90,7 +90,7 @@ Common issues and solutions for Open Hive.
 
 **Check:**
 - `WEBHOOK_URLS` environment variable contains your URL(s), comma-separated
-- `WEBHOOK_MIN_SEVERITY` is set to the appropriate level (default: `info`)
+- `ALERT_MIN_SEVERITY` is set to the appropriate level (default: `info`)
 - The webhook URL is reachable from the backend container
 - Webhooks are fire-and-forget with a 5-second timeout -- check if the receiving service is slow
 
@@ -100,7 +100,7 @@ Common issues and solutions for Open Hive.
 
 **Check:**
 - The notification skill was installed correctly
-- The formatter is registered in `server.ts`
+- The `IAlertSink` adapter is registered with `AlertDispatcher` in `server.ts`
 - Skill-specific environment variables are set (e.g., `SLACK_WEBHOOK_URL`)
 
 ## Build Issues

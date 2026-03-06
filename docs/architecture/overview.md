@@ -67,9 +67,10 @@ open-hive/
 
 The Fastify HTTP server. Contains:
 - **Routes:** 4 route modules (sessions, signals, conflicts, history) plus health check
-- **Services:** `CollisionEngine` (L1/L2/L3a detection), `NotificationDispatcher` (webhook delivery)
+- **Services:** `CollisionEngine` (L1/L2/L3 detection with tier-ordered `ISemanticAnalyzer[]`), `AlertDispatcher` + `GenericWebhookSink` (alert delivery), `KeywordAnalyzer` (L3a), `PassthroughIdentityProvider` (default auth)
+- **Wiring:** `PortRegistry` bundles all port implementations; passed to routes at startup
 - **Database:** SQLite via `node:sqlite` with WAL mode, wrapped by `IHiveStore` interface
-- **Middleware:** Authentication placeholder (replaced by OAuth skills)
+- **Middleware:** `createAuthMiddleware(provider)` delegates to the configured `IIdentityProvider`
 
 ### packages/plugin
 
@@ -85,6 +86,7 @@ Shared TypeScript types used by both backend and plugin:
 - **Models:** `Session`, `Signal`, `Collision`, `TrackedRepo` and their associated types
 - **API types:** Request/response interfaces for all endpoints
 - **Config types:** `HiveBackendConfig`, `HiveClientConfig`
+- **Port interfaces:** `IHiveStore`, `IAlertSink`, `IIdentityProvider`, `ISemanticAnalyzer` and their associated types (`AlertEvent`, `AlertParticipant`, `DeveloperIdentity`, `AuthContext`, `SemanticMatch`, `HistoricalIntent`)
 
 ### skills/
 
@@ -110,5 +112,5 @@ Indexes on `sessions.status`, `sessions.repo`, `signals.session_id`, `signals.fi
 - **Database:** SQLite with WAL mode (zero external deps)
 - **Plugin:** Claude Code hooks API, tsx
 - **Build:** Turborepo, TypeScript
-- **Testing:** Node.js test runner (40 unit tests)
+- **Testing:** Node.js test runner (66 unit tests)
 - **Deploy:** Docker (multi-stage Alpine build)

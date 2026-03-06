@@ -4,7 +4,7 @@ Open Hive defines four core ports. Each port is a TypeScript interface that skil
 
 ## IHiveStore (Storage)
 
-Defined in: `packages/backend/src/db/store.ts`
+Defined in: `packages/shared/src/ports.ts`
 
 Persists sessions, signals, and collisions. The default implementation uses SQLite via `node:sqlite`.
 
@@ -64,25 +64,38 @@ interface HistoricalIntent {
 
 ## IAlertSink (Alerts)
 
-Currently implemented via `NotificationDispatcher` and `NotificationFormatter` in `packages/backend/src/services/notification-dispatcher.ts`.
+Defined in: `packages/shared/src/ports.ts`
+
+Implemented by `AlertDispatcher` (dispatcher) and `GenericWebhookSink` (default adapter) in `packages/backend/src/services/`.
 
 ```typescript
-interface NotificationFormatter {
-  name: string;
-  format(payload: WebhookPayload): {
-    url: string;
-    body: unknown;
-    headers?: Record<string, string>;
-  };
-  shouldFire(payload: WebhookPayload): boolean;
+interface AlertParticipant {
+  developer_name: string;
+  developer_email: string;
+  repo: string;
+  intent: string | null;
+}
+
+interface AlertEvent {
+  type: 'collision_detected' | 'collision_resolved';
+  severity: CollisionSeverity;
+  collision: Collision;
+  participants: AlertParticipant[];
+  timestamp: string;
+}
+
+interface IAlertSink {
+  readonly name: string;
+  shouldFire(event: AlertEvent): boolean;
+  deliver(event: AlertEvent): Promise<void>;
 }
 ```
 
-The `NotificationDispatcher` manages a list of formatters and generic webhook URLs. When a collision is detected or resolved, it:
+The `AlertDispatcher` manages a list of `IAlertSink` adapters. When a collision is detected or resolved, it:
 
-1. Sends raw JSON to all generic `WEBHOOK_URLS` (if severity meets `WEBHOOK_MIN_SEVERITY`)
-2. Calls each registered formatter's `format()` method and sends the result
-3. All sends are fire-and-forget with a 5-second timeout
+1. Filters sinks by calling `shouldFire(event)` (e.g., severity-based filtering via `ALERT_MIN_SEVERITY`)
+2. Calls each eligible sink's `deliver()` method
+3. All delivery is fire-and-forget with a 5-second timeout
 
 **Skills targeting this port:** Slack, Teams, Discord
 
@@ -90,21 +103,31 @@ The `NotificationDispatcher` manages a list of formatters and generic webhook UR
 
 ## IIdentityProvider (Identity)
 
-Currently implemented as passthrough middleware in `packages/backend/src/middleware/auth.ts`.
+Defined in: `packages/shared/src/ports.ts`
+
+Default adapter: `PassthroughIdentityProvider` in `packages/backend/src/services/passthrough-identity-provider.ts`. Auth middleware in `packages/backend/src/middleware/auth.ts` delegates to the configured `IIdentityProvider`.
 
 ```typescript
 interface DeveloperIdentity {
   email: string;
   display_name: string;
   org?: string;
+  teams?: string[];
 }
 
-// Default: accepts all requests
-async function authenticate(request: FastifyRequest, reply: FastifyReply): Promise<void>;
-async function requireAuth(request: FastifyRequest, reply: FastifyReply): Promise<void>;
+interface AuthContext {
+  headers: Record<string, string | string[] | undefined>;
+  body?: unknown;
+}
+
+interface IIdentityProvider {
+  readonly name: string;
+  readonly requiresAuth: boolean;
+  authenticate(ctx: AuthContext): Promise<DeveloperIdentity | null>;
+}
 ```
 
-OAuth skills replace the `authenticate` function with real token validation, org/team discovery, and JWT session management.
+The auth middleware is created via `createAuthMiddleware(provider)` in `middleware/auth.ts`. When the provider's `requiresAuth` is `true`, unauthenticated requests receive a 401. The `PassthroughIdentityProvider` trusts self-reported identity from the request body. OAuth skills provide alternative `IIdentityProvider` implementations with real token validation, org/team discovery, and JWT session management.
 
 **Skills targeting this port:** GitHub OAuth, GitLab OAuth, Azure DevOps OAuth
 
@@ -112,12 +135,30 @@ OAuth skills replace the `authenticate` function with real token validation, org
 
 ## ISemanticAnalyzer (Semantic Analysis)
 
-Planned interface for L3b (embedding) and L3c (LLM) collision detection. Currently, semantic analysis is handled directly by the `CollisionEngine` using keyword extraction (L3a).
+Defined in: `packages/shared/src/ports.ts`
 
-The `CollisionEngine` checks these config flags:
+Default adapter: `KeywordAnalyzer` (tier L3a) in `packages/backend/src/services/keyword-analyzer.ts`.
 
-- `keywords_enabled` -- L3a: Jaccard similarity of extracted keywords (threshold: 0.3)
+```typescript
+interface SemanticMatch {
+  score: number;
+  tier: 'L3a' | 'L3b' | 'L3c';
+  explanation: string;
+}
+
+interface ISemanticAnalyzer {
+  readonly name: string;
+  readonly tier: 'L3a' | 'L3b' | 'L3c';
+  compare(a: string, b: string): Promise<SemanticMatch | null>;
+}
+```
+
+The `CollisionEngine` accepts an `ISemanticAnalyzer[]` and sorts them by tier order (L3a, L3b, L3c) at construction time. For each session pair, analyzers run in tier order and the first match wins. Config flags control which analyzers are instantiated:
+
+- `keywords_enabled` -- L3a: `KeywordAnalyzer` using Jaccard similarity (threshold: 0.3)
 - `embeddings_enabled` -- L3b: Cosine similarity via embeddings API (requires skill)
 - `llm_enabled` -- L3c: LLM-based semantic comparison (requires skill)
+
+Tier severity mapping: L3a produces `info`, L3b and L3c produce `warning`.
 
 **Skills targeting this port:** L3b Embeddings, L3c LLM

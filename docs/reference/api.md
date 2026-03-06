@@ -298,21 +298,23 @@ interface Collision {
 }
 ```
 
-### WebhookPayload
+### AlertEvent
 
-Sent to configured webhook URLs when collisions are detected or resolved:
+Sent to registered `IAlertSink` adapters (including generic webhook URLs) when collisions are detected or resolved:
 
 ```typescript
-interface WebhookPayload {
+interface AlertParticipant {
+  developer_name: string;
+  developer_email: string;
+  repo: string;
+  intent: string | null;
+}
+
+interface AlertEvent {
   type: 'collision_detected' | 'collision_resolved';
   severity: 'critical' | 'warning' | 'info';
   collision: Collision;
-  sessions: {
-    developer_name: string;
-    developer_email: string;
-    repo: string;
-    intent: string | null;
-  }[];
+  participants: AlertParticipant[];
   timestamp: string;
 }
 ```

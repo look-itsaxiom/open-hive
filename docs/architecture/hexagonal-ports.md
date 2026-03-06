@@ -27,9 +27,9 @@ If it's about *what Open Hive does*, it belongs in the core. If it's about *how 
 | Port | Interface | Responsibility | Default Implementation |
 |------|-----------|----------------|----------------------|
 | **Storage** | `IHiveStore` | Persist sessions, signals, collisions | SQLite via `node:sqlite` |
-| **Alerts** | `IAlertSink` / `NotificationFormatter` | Route collision notifications | Generic webhook POST |
-| **Identity** | `IIdentityProvider` | Authenticate developers, resolve teams | Passthrough (accept all) |
-| **Semantic Analysis** | `ISemanticAnalyzer` | Compare developer intents for overlap | Keyword extraction + Jaccard similarity |
+| **Alerts** | `IAlertSink` | Route collision notifications | `GenericWebhookSink` (raw JSON POST via `AlertDispatcher`) |
+| **Identity** | `IIdentityProvider` | Authenticate developers, resolve teams | `PassthroughIdentityProvider` (accept all) |
+| **Semantic Analysis** | `ISemanticAnalyzer` | Compare developer intents for overlap | `KeywordAnalyzer` (L3a: keyword extraction + Jaccard similarity) |
 
 See [port interfaces](../reference/ports.md) for the full TypeScript interface definitions.
 
@@ -48,9 +48,9 @@ Skills are the adapters that plug into ports:
 
 Each skill is a `SKILL.md` file that instructs Claude Code to:
 
-1. Create implementation source files in the backend
+1. Create implementation source files in the backend (implementing `IAlertSink`, `IIdentityProvider`, `ISemanticAnalyzer`, or `IHiveStore`)
 2. Add environment variables to `packages/backend/src/env.ts`
-3. Register the adapter in `packages/backend/src/server.ts`
+3. Register the adapter in `packages/backend/src/server.ts` via the `PortRegistry`
 4. Write tests
 5. Verify the build
 
@@ -88,11 +88,11 @@ The skill pattern keeps the core codebase clean. No vendor-specific code lives i
                             +---------+
 ```
 
-## Roadmap
+## Phase 2 Status
 
-Phase 2 milestones formalize these ports:
+All Phase 2 milestones are complete:
 
-- **M1:** Define `IAlertSink`, `IIdentityProvider`, `ISemanticAnalyzer` interfaces in `@open-hive/shared`
-- **M2:** Refactor current implementations to use port interfaces
-- **M3:** Update all 12 skills to target port interfaces
-- **M4:** Wire `ISemanticAnalyzer` into `CollisionEngine` for first-class L3b/L3c support
+- **M1:** Defined `IHiveStore`, `IAlertSink`, `IIdentityProvider`, `ISemanticAnalyzer` interfaces in `@open-hive/shared` (with `AlertEvent`, `DeveloperIdentity`, `AuthContext`, `SemanticMatch`)
+- **M2:** Refactored to `PortRegistry`, `AlertDispatcher`, `GenericWebhookSink`, `KeywordAnalyzer`, `PassthroughIdentityProvider`; replaced `NotificationDispatcher`/`NotificationFormatter`
+- **M3:** Updated all 12 skills to target port interfaces
+- **M4:** Wired `ISemanticAnalyzer[]` into `CollisionEngine` with tier-ordered execution (L3a, L3b, L3c), severity mapping, 66 tests
