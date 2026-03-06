@@ -2,14 +2,15 @@
 name: add-slack
 description: Add Slack webhook notifications for collision alerts
 category: notification
+port: IAlertSink
 requires: []
 modifies:
-  - packages/backend/src/notifications/slack-formatter.ts
+  - packages/backend/src/services/slack-alert-sink.ts
   - packages/backend/src/env.ts
   - packages/backend/src/server.ts
   - .env.example
 tests:
-  - packages/backend/src/notifications/slack-formatter.test.ts
+  - packages/backend/src/services/slack-alert-sink.test.ts
 ---
 
 # Add Slack Webhook Notifications
@@ -24,27 +25,24 @@ This skill adds Slack Block Kit webhook notifications to Open Hive. When the col
 
 ## What This Skill Does
 
-- Creates a `SlackFormatter` class that implements the `NotificationFormatter` interface.
-- Transforms raw `WebhookPayload` objects into Slack Block Kit messages with color-coded severity, a header, a details section listing the colliding developers, and a timestamp footer.
-- Provides per-formatter severity filtering via the `SLACK_MIN_SEVERITY` environment variable (independent of the dispatcher-level `WEBHOOK_MIN_SEVERITY`).
-- Registers the formatter conditionally -- only when `SLACK_WEBHOOK_URL` is set.
+- Creates a `SlackAlertSink` class that implements the `IAlertSink` port interface from `@open-hive/shared`.
+- Transforms `AlertEvent` objects into Slack Block Kit messages with color-coded severity, a header, a details section listing the colliding developers, and a timestamp footer.
+- Provides per-sink severity filtering via the `SLACK_MIN_SEVERITY` environment variable.
+- Registers the sink conditionally via `PortRegistry` -- only when `SLACK_WEBHOOK_URL` is set.
 
 ---
 
-## Step 1: Create the Slack Formatter
+## Step 1: Create the Slack Alert Sink
 
-Create the file `packages/backend/src/notifications/slack-formatter.ts` with the following content:
+Create the file `packages/backend/src/services/slack-alert-sink.ts` with the following content:
 
 ```typescript
-// packages/backend/src/notifications/slack-formatter.ts
+// packages/backend/src/services/slack-alert-sink.ts
 
-import type {
-  NotificationFormatter,
-  WebhookPayload,
-} from '../services/notification-dispatcher.js';
+import type { IAlertSink, AlertEvent } from '@open-hive/shared';
 import type { CollisionSeverity } from '@open-hive/shared';
 
-export interface SlackFormatterConfig {
+export interface SlackAlertSinkConfig {
   webhookUrl: string;
   minSeverity: CollisionSeverity;
 }
@@ -63,31 +61,31 @@ const SEVERITY_EMOJI: Record<CollisionSeverity, string> = {
 
 const SEVERITY_ORDER: CollisionSeverity[] = ['info', 'warning', 'critical'];
 
-export class SlackFormatter implements NotificationFormatter {
+export class SlackAlertSink implements IAlertSink {
   readonly name = 'slack';
-  private config: SlackFormatterConfig;
+  private config: SlackAlertSinkConfig;
 
-  constructor(config: SlackFormatterConfig) {
+  constructor(config: SlackAlertSinkConfig) {
     this.config = config;
   }
 
-  shouldFire(payload: WebhookPayload): boolean {
-    const payloadLevel = SEVERITY_ORDER.indexOf(payload.severity);
+  shouldFire(event: AlertEvent): boolean {
+    const eventLevel = SEVERITY_ORDER.indexOf(event.severity);
     const minLevel = SEVERITY_ORDER.indexOf(this.config.minSeverity);
-    return payloadLevel >= minLevel;
+    return eventLevel >= minLevel;
   }
 
-  format(payload: WebhookPayload): { url: string; body: unknown; headers?: Record<string, string> } {
-    const color = SEVERITY_COLORS[payload.severity];
-    const emoji = SEVERITY_EMOJI[payload.severity];
-    const isResolved = payload.type === 'collision_resolved';
+  async deliver(event: AlertEvent): Promise<void> {
+    const color = SEVERITY_COLORS[event.severity];
+    const emoji = SEVERITY_EMOJI[event.severity];
+    const isResolved = event.type === 'collision_resolved';
 
     const headerText = isResolved
-      ? `${emoji} Collision Resolved — ${payload.collision.type} (${payload.severity})`
-      : `${emoji} Collision Detected — ${payload.collision.type} (${payload.severity})`;
+      ? `${emoji} Collision Resolved — ${event.collision.type} (${event.severity})`
+      : `${emoji} Collision Detected — ${event.collision.type} (${event.severity})`;
 
-    const developerLines = payload.sessions
-      .map(s => `*${s.developer_name}* (${s.developer_email}) — _${s.intent ?? 'no intent declared'}_`)
+    const developerLines = event.participants
+      .map(p => `*${p.developer_name}* (${p.developer_email}) — _${p.intent ?? 'no intent declared'}_`)
       .join('\n');
 
     const body = {
@@ -107,7 +105,7 @@ export class SlackFormatter implements NotificationFormatter {
               type: 'section',
               text: {
                 type: 'mrkdwn',
-                text: `*Details:* ${payload.collision.details}`,
+                text: `*Details:* ${event.collision.details}`,
               },
             },
             {
@@ -122,11 +120,11 @@ export class SlackFormatter implements NotificationFormatter {
               fields: [
                 {
                   type: 'mrkdwn',
-                  text: `*Repo:* ${payload.sessions[0]?.repo ?? 'unknown'}`,
+                  text: `*Repo:* ${event.participants[0]?.repo ?? 'unknown'}`,
                 },
                 {
                   type: 'mrkdwn',
-                  text: `*Type:* ${payload.collision.type}`,
+                  text: `*Type:* ${event.collision.type}`,
                 },
               ],
             },
@@ -135,7 +133,7 @@ export class SlackFormatter implements NotificationFormatter {
               elements: [
                 {
                   type: 'mrkdwn',
-                  text: `Collision ID: \`${payload.collision.collision_id}\` | ${payload.timestamp}`,
+                  text: `Collision ID: \`${event.collision.collision_id}\` | ${event.timestamp}`,
                 },
               ],
             },
@@ -144,199 +142,67 @@ export class SlackFormatter implements NotificationFormatter {
       ],
     };
 
-    return {
-      url: this.config.webhookUrl,
-      body,
-    };
+    await fetch(this.config.webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
   }
 }
 ```
 
 ### Key design decisions
 
+- **Implements `IAlertSink`** from `@open-hive/shared` -- the standard outbound notification port. The interface requires `name`, `shouldFire(event)`, and `deliver(event)`.
+- **Uses `AlertEvent.participants`** for developer information (name, email, repo, intent).
 - **Attachments wrapper**: Slack Block Kit messages need an `attachments` array to get color-coded sidebars. The `color` field on the attachment controls the sidebar color.
 - **Header block**: Uses `plain_text` type (required by Slack's header block schema).
 - **mrkdwn fields**: Slack uses `mrkdwn` (not `markdown`) for its markup syntax.
-- **Severity filtering is self-contained**: The formatter checks its own `minSeverity` independently of the dispatcher's global minimum. This lets teams set the Slack channel to `warning` while keeping raw webhooks at `info`.
+- **Severity filtering is self-contained**: The sink checks its own `minSeverity` independently of any global settings. This lets teams set the Slack channel to `warning` while keeping raw webhooks at `info`.
 
 ---
 
 ## Step 2: Add Environment Configuration
 
-Edit `packages/backend/src/env.ts` to load the two new environment variables.
-
-### Before (the full file):
+Edit `packages/backend/src/env.ts` to load the two new environment variables. Add the Slack config conditionally:
 
 ```typescript
-import type { HiveBackendConfig } from '@open-hive/shared';
-
-export function loadConfig(): HiveBackendConfig {
-  return {
-    port: parseInt(process.env.PORT ?? '3000', 10),
-    database: {
-      type: (process.env.DB_TYPE as 'sqlite' | 'postgres') ?? 'sqlite',
-      url: process.env.DATABASE_URL ?? './data/hive.db',
-    },
-    collision: {
-      scope: (process.env.COLLISION_SCOPE as 'repo' | 'org') ?? 'org',
-      semantic: {
-        keywords_enabled: process.env.SEMANTIC_KEYWORDS !== 'false',
-        embeddings_enabled: process.env.SEMANTIC_EMBEDDINGS === 'true',
-        embeddings_provider: process.env.EMBEDDINGS_PROVIDER,
-        embeddings_api_key: process.env.EMBEDDINGS_API_KEY,
-        llm_enabled: process.env.SEMANTIC_LLM === 'true',
-        llm_provider: process.env.LLM_PROVIDER,
-        llm_api_key: process.env.LLM_API_KEY,
-      },
-    },
-    webhooks: {
-      urls: process.env.WEBHOOK_URLS?.split(',').filter(Boolean) ?? [],
-    },
-    session: {
-      heartbeat_interval_seconds: parseInt(process.env.HEARTBEAT_INTERVAL ?? '30', 10),
-      idle_timeout_seconds: parseInt(process.env.IDLE_TIMEOUT ?? '300', 10),
-    },
-  };
-}
-```
-
-### After:
-
-```typescript
-import type { HiveBackendConfig } from '@open-hive/shared';
 import type { CollisionSeverity } from '@open-hive/shared';
-import type { SlackFormatterConfig } from './notifications/slack-formatter.js';
 
-export interface HiveBackendConfigWithSlack extends HiveBackendConfig {
-  slack?: SlackFormatterConfig;
-}
-
-export function loadConfig(): HiveBackendConfigWithSlack {
-  const slackWebhookUrl = process.env.SLACK_WEBHOOK_URL;
-
-  return {
-    port: parseInt(process.env.PORT ?? '3000', 10),
-    database: {
-      type: (process.env.DB_TYPE as 'sqlite' | 'postgres') ?? 'sqlite',
-      url: process.env.DATABASE_URL ?? './data/hive.db',
-    },
-    collision: {
-      scope: (process.env.COLLISION_SCOPE as 'repo' | 'org') ?? 'org',
-      semantic: {
-        keywords_enabled: process.env.SEMANTIC_KEYWORDS !== 'false',
-        embeddings_enabled: process.env.SEMANTIC_EMBEDDINGS === 'true',
-        embeddings_provider: process.env.EMBEDDINGS_PROVIDER,
-        embeddings_api_key: process.env.EMBEDDINGS_API_KEY,
-        llm_enabled: process.env.SEMANTIC_LLM === 'true',
-        llm_provider: process.env.LLM_PROVIDER,
-        llm_api_key: process.env.LLM_API_KEY,
+// In the loadConfig() return object, add:
+...(process.env.SLACK_WEBHOOK_URL
+  ? {
+      slack: {
+        webhookUrl: process.env.SLACK_WEBHOOK_URL,
+        minSeverity: (process.env.SLACK_MIN_SEVERITY as CollisionSeverity) ?? 'info',
       },
-    },
-    webhooks: {
-      urls: process.env.WEBHOOK_URLS?.split(',').filter(Boolean) ?? [],
-    },
-    session: {
-      heartbeat_interval_seconds: parseInt(process.env.HEARTBEAT_INTERVAL ?? '30', 10),
-      idle_timeout_seconds: parseInt(process.env.IDLE_TIMEOUT ?? '300', 10),
-    },
-    // Slack integration — only present when SLACK_WEBHOOK_URL is set
-    ...(slackWebhookUrl
-      ? {
-          slack: {
-            webhookUrl: slackWebhookUrl,
-            minSeverity: (process.env.SLACK_MIN_SEVERITY as CollisionSeverity) ?? 'info',
-          },
-        }
-      : {}),
-  };
-}
+    }
+  : {}),
 ```
-
-### What changed
-
-1. Imported `CollisionSeverity` from `@open-hive/shared` and `SlackFormatterConfig` from the new formatter.
-2. Created `HiveBackendConfigWithSlack` that extends the shared config type with an optional `slack` property.
-3. Changed the return type from `HiveBackendConfig` to `HiveBackendConfigWithSlack`.
-4. Added a conditional spread that only populates `config.slack` when `SLACK_WEBHOOK_URL` is set in the environment.
 
 ---
 
-## Step 3: Register the Formatter in server.ts
+## Step 3: Register the Sink via PortRegistry
 
-Edit `packages/backend/src/server.ts` to import and conditionally register the Slack formatter.
+Edit `packages/backend/src/server.ts` to import and conditionally register the Slack alert sink.
 
-### Add this import at the top of the file (after the existing imports):
+### Add this import at the top of the file:
 
 ```typescript
-import { SlackFormatter } from './notifications/slack-formatter.js';
+import { SlackAlertSink } from './services/slack-alert-sink.js';
 ```
 
-### After the line that creates the dispatcher:
+### After the PortRegistry is created, register the sink:
 
 ```typescript
-const dispatcher = new NotificationDispatcher(config.webhooks.urls);
-```
-
-Add:
-
-```typescript
-if (config.slack?.webhookUrl) {
-  dispatcher.registerFormatter(new SlackFormatter(config.slack));
+if (process.env.SLACK_WEBHOOK_URL) {
+  registry.alerts.registerSink(
+    new SlackAlertSink({
+      webhookUrl: process.env.SLACK_WEBHOOK_URL,
+      minSeverity: (process.env.SLACK_MIN_SEVERITY as CollisionSeverity) ?? 'info',
+    })
+  );
 }
-```
-
-### Full server.ts after edits:
-
-```typescript
-import Fastify from 'fastify';
-import cors from '@fastify/cors';
-import { loadConfig } from './env.js';
-import { createStore } from './db/index.js';
-import { CollisionEngine } from './services/collision-engine.js';
-import { NotificationDispatcher } from './services/notification-dispatcher.js';
-import { SlackFormatter } from './notifications/slack-formatter.js';
-import { authenticate } from './middleware/auth.js';
-import { sessionRoutes } from './routes/sessions.js';
-import { signalRoutes } from './routes/signals.js';
-import { conflictRoutes } from './routes/conflicts.js';
-import { historyRoutes } from './routes/history.js';
-
-const config = loadConfig();
-const store = createStore(config);
-const engine = new CollisionEngine(store, config);
-const dispatcher = new NotificationDispatcher(config.webhooks.urls);
-
-if (config.slack?.webhookUrl) {
-  dispatcher.registerFormatter(new SlackFormatter(config.slack));
-}
-
-const app = Fastify({ logger: true });
-
-await app.register(cors, { origin: true });
-app.addHook('preHandler', authenticate);
-
-app.get('/api/health', async () => ({ status: 'ok', version: '0.2.0' }));
-
-sessionRoutes(app, store, engine, dispatcher);
-signalRoutes(app, store, engine, dispatcher);
-conflictRoutes(app, store, engine, dispatcher);
-historyRoutes(app, store);
-
-// Periodic cleanup of stale sessions
-const cleanupIntervalMs = config.session.heartbeat_interval_seconds * 1000;
-setInterval(async () => {
-  try {
-    const cleaned = await store.cleanupStaleSessions(config.session.idle_timeout_seconds);
-    if (cleaned.length > 0) {
-      app.log.info({ count: cleaned.length, session_ids: cleaned }, 'Cleaned up stale sessions');
-    }
-  } catch (err) {
-    app.log.error({ err }, 'Failed to cleanup stale sessions');
-  }
-}, cleanupIntervalMs);
-
-await app.listen({ port: config.port, host: '0.0.0.0' });
-app.log.info(`Open Hive backend listening on port ${config.port}`);
 ```
 
 ---
@@ -363,21 +229,21 @@ If `.env.example` does not exist yet, create it at the repo root. If it already 
 
 ## Step 5: Add Tests
 
-Create the file `packages/backend/src/notifications/slack-formatter.test.ts` with the following content:
+Create the file `packages/backend/src/services/slack-alert-sink.test.ts`:
 
 ```typescript
-// packages/backend/src/notifications/slack-formatter.test.ts
+// packages/backend/src/services/slack-alert-sink.test.ts
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { SlackFormatter } from './slack-formatter.js';
-import type { SlackFormatterConfig } from './slack-formatter.js';
-import type { WebhookPayload } from '../services/notification-dispatcher.js';
+import { SlackAlertSink } from './slack-alert-sink.js';
+import type { SlackAlertSinkConfig } from './slack-alert-sink.js';
+import type { AlertEvent } from '@open-hive/shared';
 import type { Collision, CollisionSeverity } from '@open-hive/shared';
 
 // ─── Test Helpers ────────────────────────────────────────────
 
-function makeConfig(overrides?: Partial<SlackFormatterConfig>): SlackFormatterConfig {
+function makeConfig(overrides?: Partial<SlackAlertSinkConfig>): SlackAlertSinkConfig {
   return {
     webhookUrl: 'https://hooks.slack.com/services/YOUR/TEST/HOOK',
     minSeverity: 'info',
@@ -385,7 +251,7 @@ function makeConfig(overrides?: Partial<SlackFormatterConfig>): SlackFormatterCo
   };
 }
 
-function makePayload(overrides?: Partial<WebhookPayload>): WebhookPayload {
+function makeEvent(overrides?: Partial<AlertEvent>): AlertEvent {
   const collision: Collision = {
     collision_id: 'col-test-1',
     session_ids: ['sess-a', 'sess-b'],
@@ -401,7 +267,7 @@ function makePayload(overrides?: Partial<WebhookPayload>): WebhookPayload {
     type: 'collision_detected',
     severity: 'critical',
     collision,
-    sessions: [
+    participants: [
       { developer_name: 'Alice', developer_email: 'alice@example.com', repo: 'my-repo', intent: 'fix auth bug' },
       { developer_name: 'Bob', developer_email: 'bob@example.com', repo: 'my-repo', intent: 'refactor auth module' },
     ],
@@ -410,151 +276,40 @@ function makePayload(overrides?: Partial<WebhookPayload>): WebhookPayload {
   };
 }
 
-// ─── format() ────────────────────────────────────────────────
-
-describe('SlackFormatter — format()', () => {
-  it('returns the configured webhook URL', () => {
-    const url = 'https://hooks.slack.com/services/YOUR/MOCK/HOOK';
-    const formatter = new SlackFormatter(makeConfig({ webhookUrl: url }));
-    const result = formatter.format(makePayload());
-    assert.equal(result.url, url);
-  });
-
-  it('produces valid Slack Block Kit JSON with attachments', () => {
-    const formatter = new SlackFormatter(makeConfig());
-    const result = formatter.format(makePayload());
-    const body = result.body as { attachments: Array<{ color: string; blocks: unknown[] }> };
-
-    assert.ok(Array.isArray(body.attachments), 'body must have attachments array');
-    assert.equal(body.attachments.length, 1);
-    assert.ok(Array.isArray(body.attachments[0].blocks), 'attachment must have blocks array');
-    assert.ok(body.attachments[0].color, 'attachment must have a color');
-  });
-
-  it('includes a header block with collision type and severity', () => {
-    const formatter = new SlackFormatter(makeConfig());
-    const result = formatter.format(makePayload({ severity: 'warning' }));
-    const body = result.body as { attachments: Array<{ blocks: Array<{ type: string; text?: { text: string } }> }> };
-    const header = body.attachments[0].blocks.find(b => b.type === 'header');
-
-    assert.ok(header, 'must contain a header block');
-    assert.ok(header.text?.text.includes('warning'), 'header should include severity');
-    assert.ok(header.text?.text.includes('file'), 'header should include collision type');
-  });
-
-  it('includes developer names and intents in the body', () => {
-    const formatter = new SlackFormatter(makeConfig());
-    const result = formatter.format(makePayload());
-    const bodyStr = JSON.stringify(result.body);
-
-    assert.ok(bodyStr.includes('Alice'), 'should contain first developer name');
-    assert.ok(bodyStr.includes('Bob'), 'should contain second developer name');
-    assert.ok(bodyStr.includes('fix auth bug'), 'should contain first developer intent');
-    assert.ok(bodyStr.includes('refactor auth module'), 'should contain second developer intent');
-  });
-
-  it('includes collision details', () => {
-    const formatter = new SlackFormatter(makeConfig());
-    const result = formatter.format(makePayload());
-    const bodyStr = JSON.stringify(result.body);
-
-    assert.ok(bodyStr.includes('Both sessions modifying src/auth.ts'), 'should contain collision details');
-  });
-
-  it('includes a context block with timestamp and collision ID', () => {
-    const formatter = new SlackFormatter(makeConfig());
-    const payload = makePayload({ timestamp: '2026-03-03T15:30:00.000Z' });
-    const result = formatter.format(payload);
-    const body = result.body as { attachments: Array<{ blocks: Array<{ type: string; elements?: Array<{ text: string }> }> }> };
-    const ctx = body.attachments[0].blocks.find(b => b.type === 'context');
-
-    assert.ok(ctx, 'must contain a context block');
-    const contextText = ctx.elements?.[0]?.text ?? '';
-    assert.ok(contextText.includes('col-test-1'), 'context should include collision ID');
-    assert.ok(contextText.includes('2026-03-03T15:30:00.000Z'), 'context should include timestamp');
-  });
-
-  it('shows "Collision Resolved" header for resolved events', () => {
-    const formatter = new SlackFormatter(makeConfig());
-    const result = formatter.format(makePayload({ type: 'collision_resolved' }));
-    const body = result.body as { attachments: Array<{ blocks: Array<{ type: string; text?: { text: string } }> }> };
-    const header = body.attachments[0].blocks.find(b => b.type === 'header');
-
-    assert.ok(header?.text?.text.includes('Resolved'), 'header should say Resolved');
-  });
-
-  it('handles sessions with null intent gracefully', () => {
-    const formatter = new SlackFormatter(makeConfig());
-    const payload = makePayload();
-    payload.sessions = [
-      { developer_name: 'Charlie', developer_email: 'charlie@example.com', repo: 'my-repo', intent: null },
-    ];
-    const result = formatter.format(payload);
-    const bodyStr = JSON.stringify(result.body);
-
-    assert.ok(bodyStr.includes('no intent declared'), 'should show fallback text for null intent');
-  });
-
-  it('does not set custom headers', () => {
-    const formatter = new SlackFormatter(makeConfig());
-    const result = formatter.format(makePayload());
-    assert.equal(result.headers, undefined, 'Slack webhooks need no extra headers');
-  });
-});
-
-// ─── Color mapping ───────────────────────────────────────────
-
-describe('SlackFormatter — color mapping', () => {
-  const cases: Array<{ severity: CollisionSeverity; expectedColor: string }> = [
-    { severity: 'critical', expectedColor: '#E01E5A' },
-    { severity: 'warning',  expectedColor: '#ECB22E' },
-    { severity: 'info',     expectedColor: '#36C5F0' },
-  ];
-
-  for (const { severity, expectedColor } of cases) {
-    it(`uses ${expectedColor} for ${severity}`, () => {
-      const formatter = new SlackFormatter(makeConfig());
-      const result = formatter.format(makePayload({ severity }));
-      const body = result.body as { attachments: Array<{ color: string }> };
-      assert.equal(body.attachments[0].color, expectedColor);
-    });
-  }
-});
-
 // ─── shouldFire() ────────────────────────────────────────────
 
-describe('SlackFormatter — shouldFire()', () => {
+describe('SlackAlertSink — shouldFire()', () => {
   it('fires for all severities when minSeverity is info', () => {
-    const formatter = new SlackFormatter(makeConfig({ minSeverity: 'info' }));
+    const sink = new SlackAlertSink(makeConfig({ minSeverity: 'info' }));
 
-    assert.equal(formatter.shouldFire(makePayload({ severity: 'info' })), true);
-    assert.equal(formatter.shouldFire(makePayload({ severity: 'warning' })), true);
-    assert.equal(formatter.shouldFire(makePayload({ severity: 'critical' })), true);
+    assert.equal(sink.shouldFire(makeEvent({ severity: 'info' })), true);
+    assert.equal(sink.shouldFire(makeEvent({ severity: 'warning' })), true);
+    assert.equal(sink.shouldFire(makeEvent({ severity: 'critical' })), true);
   });
 
   it('fires for warning and critical when minSeverity is warning', () => {
-    const formatter = new SlackFormatter(makeConfig({ minSeverity: 'warning' }));
+    const sink = new SlackAlertSink(makeConfig({ minSeverity: 'warning' }));
 
-    assert.equal(formatter.shouldFire(makePayload({ severity: 'info' })), false);
-    assert.equal(formatter.shouldFire(makePayload({ severity: 'warning' })), true);
-    assert.equal(formatter.shouldFire(makePayload({ severity: 'critical' })), true);
+    assert.equal(sink.shouldFire(makeEvent({ severity: 'info' })), false);
+    assert.equal(sink.shouldFire(makeEvent({ severity: 'warning' })), true);
+    assert.equal(sink.shouldFire(makeEvent({ severity: 'critical' })), true);
   });
 
   it('fires only for critical when minSeverity is critical', () => {
-    const formatter = new SlackFormatter(makeConfig({ minSeverity: 'critical' }));
+    const sink = new SlackAlertSink(makeConfig({ minSeverity: 'critical' }));
 
-    assert.equal(formatter.shouldFire(makePayload({ severity: 'info' })), false);
-    assert.equal(formatter.shouldFire(makePayload({ severity: 'warning' })), false);
-    assert.equal(formatter.shouldFire(makePayload({ severity: 'critical' })), true);
+    assert.equal(sink.shouldFire(makeEvent({ severity: 'info' })), false);
+    assert.equal(sink.shouldFire(makeEvent({ severity: 'warning' })), false);
+    assert.equal(sink.shouldFire(makeEvent({ severity: 'critical' })), true);
   });
 });
 
 // ─── name property ───────────────────────────────────────────
 
-describe('SlackFormatter — name', () => {
+describe('SlackAlertSink — name', () => {
   it('has name "slack"', () => {
-    const formatter = new SlackFormatter(makeConfig());
-    assert.equal(formatter.name, 'slack');
+    const sink = new SlackAlertSink(makeConfig());
+    assert.equal(sink.name, 'slack');
   });
 });
 ```
@@ -567,20 +322,6 @@ Run the build and test suite from the repo root:
 
 ```bash
 npm run build && npm test
-```
-
-If the test runner glob `src/**/*.test.ts` picks up files in subdirectories (which it should), the new `notifications/slack-formatter.test.ts` will be included automatically. Verify you see output like:
-
-```
-# tests 20
-# pass 20
-# fail 0
-```
-
-If the glob does not pick up nested directories, update the test script in `packages/backend/package.json` to:
-
-```json
-"test": "node --import tsx --test 'src/**/*.test.ts'"
 ```
 
 ---
@@ -604,11 +345,6 @@ services:
       SLACK_MIN_SEVERITY: warning
 ```
 
-### Interaction with generic webhooks
+### Interaction with other alert sinks
 
-The Slack formatter runs **in addition to** any generic webhook URLs configured via `WEBHOOK_URLS`. They are independent systems:
-
-- `WEBHOOK_URLS` sends raw `WebhookPayload` JSON to each URL.
-- `SLACK_WEBHOOK_URL` sends Slack Block Kit formatted messages.
-
-You can use both, either, or neither.
+The Slack alert sink runs **in addition to** any other registered `IAlertSink` implementations (generic webhooks, Discord, Teams, etc.). Each sink fires independently based on its own `shouldFire()` logic. The `AlertDispatcher` manages all sinks via the `PortRegistry`.
