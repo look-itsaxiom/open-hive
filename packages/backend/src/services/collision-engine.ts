@@ -1,13 +1,24 @@
 import { dirname } from 'node:path';
-import type { IHiveStore, ISemanticAnalyzer, HistoricalIntent } from '@open-hive/shared';
+import type { IHiveStore, ISemanticAnalyzer, HistoricalIntent, CollisionSeverity } from '@open-hive/shared';
 import type { Collision, HiveBackendConfig } from '@open-hive/shared';
+
+const TIER_ORDER: Record<string, number> = { L3a: 0, L3b: 1, L3c: 2 };
 
 export class CollisionEngine {
   constructor(
     private store: IHiveStore,
     private config: HiveBackendConfig,
     private analyzers: ISemanticAnalyzer[] = [],
-  ) {}
+  ) {
+    // Sort analyzers by tier order once at construction time
+    this.analyzers = [...this.analyzers].sort(
+      (a, b) => (TIER_ORDER[a.tier] ?? 99) - (TIER_ORDER[b.tier] ?? 99),
+    );
+  }
+
+  private tierSeverity(tier: 'L3a' | 'L3b' | 'L3c'): CollisionSeverity {
+    return tier === 'L3a' ? 'info' : 'warning';
+  }
 
   async checkFileCollision(session_id: string, file_path: string, repo: string): Promise<Collision[]> {
     const activeSessions = await this.store.getActiveSessions(
@@ -88,8 +99,8 @@ export class CollisionEngine {
         const collision = await this.store.createCollision({
           session_ids: [session_id, other.session_id],
           type: 'semantic',
-          severity: 'info',
-          details: `Possible overlap: "${truncate(intent, 60)}" vs "${truncate(other.intent!, 60)}" (${analyzer.name}, score: ${match.score.toFixed(2)})`,
+          severity: this.tierSeverity(match.tier),
+          details: `[${match.tier}] Possible overlap: "${truncate(intent, 60)}" vs "${truncate(other.intent!, 60)}" (${analyzer.name}, score: ${match.score.toFixed(2)})`,
           detected_at: new Date().toISOString(),
         });
         collisions.push(collision);
@@ -141,7 +152,7 @@ export class CollisionEngine {
           session_ids: [session_id, otherSessionId],
           type: 'semantic',
           severity: 'warning',
-          details: `Historical overlap: "${truncate(intent, 60)}" vs "${truncate(hi.intent, 60)}" (${hi.developer_name}, ${timeSince(hi.timestamp)} ago, ${analyzer.name}, score: ${match.score.toFixed(2)})`,
+          details: `[${match.tier}] Historical overlap: "${truncate(intent, 60)}" vs "${truncate(hi.intent, 60)}" (${hi.developer_name}, ${timeSince(hi.timestamp)} ago, ${analyzer.name}, score: ${match.score.toFixed(2)})`,
           detected_at: new Date().toISOString(),
         });
         collisions.push(collision);
