@@ -36,19 +36,14 @@ export interface HiveBackendConfig {
     org?: string;
   };
   alerts: {
-    sinks: Array<{
-      type: 'webhook' | 'slack' | 'email' | 'log';
-      enabled: boolean;
-      url?: string;
-      channel?: string;
-      min_severity?: 'critical' | 'warning' | 'info';
-    }>;
+    /** Minimum severity for the built-in generic webhook sink. */
+    min_severity: 'info' | 'warning' | 'critical';
+    /** Generic webhook URLs (raw JSON POST). Skills register their own sinks. */
+    webhook_urls: string[];
   };
   identity: {
-    provider: 'static' | 'jwt' | 'oauth';
-    required: boolean;
-    jwt_secret?: string;
-    oauth_issuer?: string;
+    /** Which identity provider to use. 'passthrough' trusts self-reported identity. */
+    provider: 'passthrough' | string;
   };
   webhooks: {
     urls: string[];

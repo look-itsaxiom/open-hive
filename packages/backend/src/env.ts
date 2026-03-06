@@ -20,22 +20,11 @@ export function loadConfig(): HiveBackendConfig {
       },
     },
     alerts: {
-      sinks: (process.env.ALERT_SINKS ?? 'log')
-        .split(',')
-        .filter(Boolean)
-        .map(type => ({
-          type: type.trim() as 'webhook' | 'slack' | 'email' | 'log',
-          enabled: true,
-          url: type.trim() === 'webhook' ? process.env.ALERT_WEBHOOK_URL : undefined,
-          channel: type.trim() === 'slack' ? process.env.ALERT_SLACK_CHANNEL : undefined,
-          min_severity: (process.env.ALERT_MIN_SEVERITY as 'critical' | 'warning' | 'info') ?? 'warning',
-        })),
+      min_severity: (process.env.ALERT_MIN_SEVERITY as 'info' | 'warning' | 'critical') ?? 'info',
+      webhook_urls: process.env.WEBHOOK_URLS?.split(',').filter(Boolean) ?? [],
     },
     identity: {
-      provider: (process.env.IDENTITY_PROVIDER as 'static' | 'jwt' | 'oauth') ?? 'static',
-      required: process.env.IDENTITY_REQUIRED === 'true',
-      jwt_secret: process.env.JWT_SECRET,
-      oauth_issuer: process.env.OAUTH_ISSUER,
+      provider: process.env.IDENTITY_PROVIDER ?? 'passthrough',
     },
     webhooks: {
       urls: process.env.WEBHOOK_URLS?.split(',').filter(Boolean) ?? [],

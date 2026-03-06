@@ -56,9 +56,9 @@ export interface AlertParticipant {
   intent: string | null;
 }
 
-/** An alert event fired when a collision is detected. */
+/** An alert event fired when a collision is detected or resolved. */
 export interface AlertEvent {
-  type: 'collision_detected';
+  type: 'collision_detected' | 'collision_resolved';
   severity: CollisionSeverity;
   collision: Collision;
   participants: AlertParticipant[];
@@ -103,22 +103,32 @@ export interface IIdentityProvider {
 
 // ─── ISemanticAnalyzer ───────────────────────────────────────────────────────
 
-/** Result of a semantic comparison between two intents or code areas. */
+/** Result of a semantic comparison between two developer intents. */
 export interface SemanticMatch {
-  /** Similarity score from 0.0 (unrelated) to 1.0 (identical). */
+  /** Similarity score from 0.0 (unrelated) to 1.0 (identical intent). */
   score: number;
-  /** Qualitative tier derived from the score. */
-  tier: 'exact' | 'high' | 'medium' | 'low' | 'none';
-  /** Human-readable explanation of why the match was scored this way. */
+  /** Which detection tier produced this result. */
+  tier: 'L3a' | 'L3b' | 'L3c';
+  /** Human-readable explanation of why overlap was detected. */
   explanation: string;
 }
 
-/** Semantic analysis port — adapters compare intents using different strategies. */
+/**
+ * Semantic analysis port — adapters compare developer intents for overlap.
+ *
+ * Multiple analyzers can be registered; the collision engine runs them in
+ * tier order (L3a → L3b → L3c). First match wins per session pair.
+ *
+ * Built-in: L3a (keyword/Jaccard). Skills provide L3b (embeddings) and L3c (LLM).
+ */
 export interface ISemanticAnalyzer {
-  /** Human-readable name for logging (e.g., "keyword", "embedding", "llm"). */
+  /** Human-readable name for logging (e.g., "keyword-jaccard", "openai-embeddings"). */
   readonly name: string;
-  /** The analysis tier this analyzer provides (used for fallback ordering). */
-  readonly tier: 'keyword' | 'embedding' | 'llm';
-  /** Compare two text inputs and return a semantic match result. */
-  compare(a: string, b: string): Promise<SemanticMatch>;
+  /** Which detection tier this analyzer implements. */
+  readonly tier: 'L3a' | 'L3b' | 'L3c';
+  /**
+   * Compare two intents. Return a SemanticMatch if overlap is detected
+   * above the analyzer's internal threshold, or null if no meaningful overlap.
+   */
+  compare(a: string, b: string): Promise<SemanticMatch | null>;
 }
