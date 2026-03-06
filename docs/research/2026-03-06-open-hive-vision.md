@@ -70,17 +70,17 @@ Any agent or tool can join the hive by following the registration protocol:
 - Declare capabilities: what sensory data can it provide, what motor actions can it perform
 - Skill files define the specifics — the onboarding mechanism for new nerve types
 
-## How the Ecosystem Fits
+## Adjacent Capabilities the Hive Needs
 
-Open Hive is one layer of a broader ecosystem. Each project contributes a distinct capability:
+Open Hive doesn't exist in isolation. For the full vision to work, several adjacent capabilities must exist — whether built into the hive, contributed by third parties, or evolved from other systems:
 
-**Open Hive** — the hive mind. Organizational awareness and coordination infrastructure.
+**Orchestration.** Something needs to track projects, milestones, and work distribution at a level above individual agent sessions. This is the kind of system that would register as a sensory+motor nerve — reporting project state in, receiving coordination instructions out. *(The author's personal project Open Workshop explores this pattern as a Claude Code plugin that coordinates across multiple projects.)*
 
-**Open Workshop** — an orchestration system that participates in the hive. Reports project state, milestone progress, team allocation. Receives organizational context back. The first "non-coding-agent" nerve type.
+**AI-teachable onboarding.** New nerve types need a way to learn the hive protocol without custom integration code. Skill files — AI-readable instructions that teach an agent how to interact with a system — are the pattern. *(The author's ClawCraft.ai project is a proof of concept for this methodology: onboarding AI to foreign systems via exposed skill files. This pattern is already embedded in Open Hive's Phase 2 architecture.)*
 
-**ClawCraft** — the methodology for onboarding new nerve types. Skill files as the universal adapter between any AI tool and the hive. Already embedded in Open Hive's architecture.
+**Organizational knowledge.** The hive knows what's happening *now*. But effective coordination also requires knowing what the org *knows* — domain expertise, historical decisions, institutional memory. A living, embedding-based knowledge system would feed long-term context into the hive's real-time awareness. *(The author's Millennium / Ask Axiom projects explore how a centralized, living knowledgebase can provide organizational memory to AI systems.)*
 
-**Millennium / Ask Axiom** — organizational knowledge that feeds into the hive. The hive knows what's happening *now*. Millennium knows what the org *knows*. Together: real-time awareness + institutional memory.
+These are not components of Open Hive. They are characteristics of the broader problem space. Any organization deploying the hive will need solutions in these areas — whether they build them, buy them, or evolve them from existing tools.
 
 ## The Spectrum of Ambition
 
