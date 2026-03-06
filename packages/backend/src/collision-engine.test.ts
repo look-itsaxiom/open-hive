@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { HiveStore } from './db/store.js';
 import { CollisionEngine } from './services/collision-engine.js';
+import { KeywordAnalyzer } from './services/keyword-analyzer.js';
 import type { HiveBackendConfig } from '@open-hive/shared';
 
 function createTestConfig(overrides?: Partial<HiveBackendConfig>): HiveBackendConfig {
@@ -87,7 +88,7 @@ describe('CollisionEngine — L1 file collisions', () => {
   beforeEach(() => {
     db = createTestDB();
     store = new HiveStore(db);
-    engine = new CollisionEngine(store, createTestConfig());
+    engine = new CollisionEngine(store, createTestConfig(), [new KeywordAnalyzer()]);
   });
 
   it('detects critical collision when two sessions modify the same file', async () => {
@@ -162,7 +163,7 @@ describe('CollisionEngine — L2 directory collisions', () => {
   beforeEach(() => {
     db = createTestDB();
     store = new HiveStore(db);
-    engine = new CollisionEngine(store, createTestConfig());
+    engine = new CollisionEngine(store, createTestConfig(), [new KeywordAnalyzer()]);
   });
 
   it('detects warning collision when two sessions work in the same directory', async () => {
@@ -210,7 +211,7 @@ describe('CollisionEngine — L3a semantic collisions', () => {
   beforeEach(() => {
     db = createTestDB();
     store = new HiveStore(db);
-    engine = new CollisionEngine(store, createTestConfig());
+    engine = new CollisionEngine(store, createTestConfig(), [new KeywordAnalyzer()]);
   });
 
   it('detects semantic collision when intents share significant keywords', async () => {
@@ -254,7 +255,8 @@ describe('CollisionEngine — L3a semantic collisions', () => {
         semantic: { keywords_enabled: false, embeddings_enabled: false, llm_enabled: false },
       },
     });
-    engine = new CollisionEngine(store, config);
+    // When keywords_enabled is false, no analyzers are registered
+    engine = new CollisionEngine(store, config, []);
 
     await seedSession(store, 'sess-a', 'Alice');
     await seedSession(store, 'sess-b', 'Bob');
@@ -293,7 +295,7 @@ describe('CollisionEngine — scope configuration', () => {
         semantic: { keywords_enabled: true, embeddings_enabled: false, llm_enabled: false },
       },
     });
-    const engine = new CollisionEngine(store, config);
+    const engine = new CollisionEngine(store, config, [new KeywordAnalyzer()]);
 
     await seedSession(store, 'sess-a', 'Alice', 'repo-one');
     await seedSession(store, 'sess-b', 'Bob', 'repo-two');
@@ -308,7 +310,7 @@ describe('CollisionEngine — scope configuration', () => {
   it('org scope checks sessions across all repos', async () => {
     const db = createTestDB();
     const store = new HiveStore(db);
-    const engine = new CollisionEngine(store, createTestConfig());
+    const engine = new CollisionEngine(store, createTestConfig(), [new KeywordAnalyzer()]);
 
     await seedSession(store, 'sess-a', 'Alice', 'repo-one');
     await seedSession(store, 'sess-b', 'Bob', 'repo-two');
