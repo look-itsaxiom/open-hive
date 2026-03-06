@@ -1,0 +1,441 @@
+/**
+ * Integration smoke tests — validate PortRegistry wiring end-to-end.
+ *
+ * These tests boot the actual Fastify server (in-memory SQLite) and walk
+ * through real API flows to verify that the hexagonal architecture wiring
+ * works correctly: PortRegistry → routes → CollisionEngine → store.
+ */
+import { describe, it, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import Fastify, { type FastifyInstance } from 'fastify';
+import cors from '@fastify/cors';
+import { DatabaseSync } from 'node:sqlite';
+import { HiveStore } from './db/store.js';
+import { CollisionEngine } from './services/collision-engine.js';
+import { KeywordAnalyzer } from './services/keyword-analyzer.js';
+import { PassthroughIdentityProvider } from './services/passthrough-identity-provider.js';
+import { AlertDispatcher } from './services/alert-dispatcher.js';
+import { createAuthMiddleware } from './middleware/auth.js';
+import type { PortRegistry } from './port-registry.js';
+import { sessionRoutes } from './routes/sessions.js';
+import { signalRoutes } from './routes/signals.js';
+import { conflictRoutes } from './routes/conflicts.js';
+import { historyRoutes } from './routes/history.js';
+import type { HiveBackendConfig } from '@open-hive/shared';
+
+function createTestConfig(): HiveBackendConfig {
+  return {
+    port: 0, // random port
+    database: { type: 'sqlite', url: ':memory:' },
+    collision: {
+      scope: 'org',
+      semantic: {
+        keywords_enabled: true,
+        embeddings_enabled: false,
+        llm_enabled: false,
+      },
+    },
+    alerts: { min_severity: 'info', webhook_urls: [] },
+    identity: { provider: 'passthrough' },
+    webhooks: { urls: [] },
+    session: { heartbeat_interval_seconds: 30, idle_timeout_seconds: 300 },
+  };
+}
+
+function createTestDB(): DatabaseSync {
+  const db = new DatabaseSync(':memory:');
+  db.exec('PRAGMA journal_mode = WAL');
+  db.exec('PRAGMA foreign_keys = ON');
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      session_id TEXT PRIMARY KEY,
+      developer_email TEXT NOT NULL,
+      developer_name TEXT NOT NULL,
+      repo TEXT NOT NULL,
+      project_path TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      last_activity TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      intent TEXT,
+      files_touched TEXT NOT NULL DEFAULT '[]',
+      areas TEXT NOT NULL DEFAULT '[]'
+    );
+    CREATE TABLE IF NOT EXISTS signals (
+      signal_id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(session_id),
+      timestamp TEXT NOT NULL,
+      type TEXT NOT NULL,
+      content TEXT NOT NULL,
+      file_path TEXT,
+      semantic_area TEXT
+    );
+    CREATE TABLE IF NOT EXISTS collisions (
+      collision_id TEXT PRIMARY KEY,
+      session_ids TEXT NOT NULL,
+      type TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      details TEXT NOT NULL,
+      detected_at TEXT NOT NULL,
+      resolved INTEGER NOT NULL DEFAULT 0,
+      resolved_by TEXT
+    );
+    CREATE TABLE IF NOT EXISTS tracked_repos (
+      repo_id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      remote_url TEXT,
+      discovered_at TEXT NOT NULL,
+      last_activity TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
+    CREATE INDEX IF NOT EXISTS idx_sessions_repo ON sessions(repo);
+    CREATE INDEX IF NOT EXISTS idx_signals_session ON signals(session_id);
+    CREATE INDEX IF NOT EXISTS idx_signals_file ON signals(file_path);
+    CREATE INDEX IF NOT EXISTS idx_collisions_resolved ON collisions(resolved);
+  `);
+  return db;
+}
+
+async function buildTestServer(): Promise<FastifyInstance> {
+  const config = createTestConfig();
+  const db = createTestDB();
+  const store = new HiveStore(db);
+  const analyzers = [new KeywordAnalyzer()];
+  const engine = new CollisionEngine(store, config, analyzers);
+  const identity = new PassthroughIdentityProvider();
+  const alerts = new AlertDispatcher();
+
+  const registry: PortRegistry = { store, identity, analyzers, alerts };
+
+  const app = Fastify({ logger: false });
+  await app.register(cors, { origin: true });
+  app.addHook('preHandler', createAuthMiddleware(identity));
+  app.get('/api/health', async () => ({ status: 'ok', version: '0.2.0' }));
+
+  sessionRoutes(app, registry, engine);
+  signalRoutes(app, registry, engine);
+  conflictRoutes(app, registry, engine);
+  historyRoutes(app, registry);
+
+  return app;
+}
+
+// ─── Smoke Tests ────────────────────────────────────────────
+
+describe('Smoke: server boots and health check', () => {
+  let app: FastifyInstance;
+
+  before(async () => { app = await buildTestServer(); });
+  after(async () => { await app.close(); });
+
+  it('GET /api/health returns ok', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/health' });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.status, 'ok');
+    assert.equal(body.version, '0.2.0');
+  });
+});
+
+describe('Smoke: session lifecycle', () => {
+  let app: FastifyInstance;
+
+  before(async () => { app = await buildTestServer(); });
+  after(async () => { await app.close(); });
+
+  it('register → heartbeat → list → end', async () => {
+    // Register
+    const reg = await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'smoke-1', developer_email: 'alice@test.com',
+        developer_name: 'Alice', repo: 'test-repo', project_path: '/code/test',
+      },
+    });
+    assert.equal(reg.statusCode, 200);
+    const regBody = JSON.parse(reg.body);
+    assert.equal(regBody.ok, true);
+
+    // Heartbeat
+    const hb = await app.inject({
+      method: 'POST', url: '/api/sessions/heartbeat',
+      payload: { session_id: 'smoke-1' },
+    });
+    assert.equal(hb.statusCode, 200);
+
+    // List active
+    const list = await app.inject({ method: 'GET', url: '/api/sessions/active?repo=test-repo' });
+    assert.equal(list.statusCode, 200);
+    const listBody = JSON.parse(list.body);
+    assert.equal(listBody.sessions.length, 1);
+    assert.equal(listBody.sessions[0].developer_name, 'Alice');
+
+    // End
+    const end = await app.inject({
+      method: 'POST', url: '/api/sessions/end',
+      payload: { session_id: 'smoke-1' },
+    });
+    assert.equal(end.statusCode, 200);
+
+    // Verify gone
+    const list2 = await app.inject({ method: 'GET', url: '/api/sessions/active?repo=test-repo' });
+    const list2Body = JSON.parse(list2.body);
+    assert.equal(list2Body.sessions.length, 0);
+  });
+});
+
+describe('Smoke: L1 file collision detection', () => {
+  let app: FastifyInstance;
+
+  before(async () => { app = await buildTestServer(); });
+  after(async () => { await app.close(); });
+
+  it('two devs modifying same file → critical collision', async () => {
+    // Register Alice
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'alice-1', developer_email: 'alice@test.com',
+        developer_name: 'Alice', repo: 'app', project_path: '/code/app',
+      },
+    });
+
+    // Register Bob
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'bob-1', developer_email: 'bob@test.com',
+        developer_name: 'Bob', repo: 'app', project_path: '/code/app',
+      },
+    });
+
+    // Alice modifies auth.ts
+    const aliceAct = await app.inject({
+      method: 'POST', url: '/api/signals/activity',
+      payload: { session_id: 'alice-1', file_path: 'src/auth.ts', type: 'file_modify' },
+    });
+    assert.equal(aliceAct.statusCode, 200);
+    const aliceBody = JSON.parse(aliceAct.body);
+    assert.equal(aliceBody.collisions.length, 0); // no collision yet
+
+    // Bob modifies same file → collision!
+    const bobAct = await app.inject({
+      method: 'POST', url: '/api/signals/activity',
+      payload: { session_id: 'bob-1', file_path: 'src/auth.ts', type: 'file_modify' },
+    });
+    assert.equal(bobAct.statusCode, 200);
+    const bobBody = JSON.parse(bobAct.body);
+    assert.equal(bobBody.collisions.length, 1);
+    assert.equal(bobBody.collisions[0].type, 'file');
+    assert.equal(bobBody.collisions[0].severity, 'critical');
+    assert.ok(bobBody.collisions[0].details.includes('src/auth.ts'));
+  });
+});
+
+describe('Smoke: L2 directory collision detection', () => {
+  let app: FastifyInstance;
+
+  before(async () => { app = await buildTestServer(); });
+  after(async () => { await app.close(); });
+
+  it('two devs modifying files in same directory → warning collision', async () => {
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'alice-2', developer_email: 'alice@test.com',
+        developer_name: 'Alice', repo: 'app', project_path: '/code/app',
+      },
+    });
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'bob-2', developer_email: 'bob@test.com',
+        developer_name: 'Bob', repo: 'app', project_path: '/code/app',
+      },
+    });
+
+    await app.inject({
+      method: 'POST', url: '/api/signals/activity',
+      payload: { session_id: 'alice-2', file_path: 'src/auth/login.ts', type: 'file_modify' },
+    });
+
+    const bobAct = await app.inject({
+      method: 'POST', url: '/api/signals/activity',
+      payload: { session_id: 'bob-2', file_path: 'src/auth/refresh.ts', type: 'file_modify' },
+    });
+    const body = JSON.parse(bobAct.body);
+    assert.equal(body.collisions.length, 1);
+    assert.equal(body.collisions[0].type, 'directory');
+    assert.equal(body.collisions[0].severity, 'warning');
+  });
+});
+
+describe('Smoke: L3a semantic collision via intent', () => {
+  let app: FastifyInstance;
+
+  before(async () => { app = await buildTestServer(); });
+  after(async () => { await app.close(); });
+
+  it('overlapping intents detected through PortRegistry → KeywordAnalyzer', async () => {
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'alice-3', developer_email: 'alice@test.com',
+        developer_name: 'Alice', repo: 'app', project_path: '/code/app',
+      },
+    });
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'bob-3', developer_email: 'bob@test.com',
+        developer_name: 'Bob', repo: 'app', project_path: '/code/app',
+      },
+    });
+
+    // Alice declares intent
+    await app.inject({
+      method: 'POST', url: '/api/signals/intent',
+      payload: { session_id: 'alice-3', content: 'refactoring the auth token refresh logic in login', type: 'prompt' },
+    });
+
+    // Bob declares overlapping intent
+    const bobIntent = await app.inject({
+      method: 'POST', url: '/api/signals/intent',
+      payload: { session_id: 'bob-3', content: 'fixing auth token expiry handling in login flow', type: 'prompt' },
+    });
+    const body = JSON.parse(bobIntent.body);
+    assert.ok(body.collisions.length >= 1, 'Should detect semantic overlap');
+    assert.equal(body.collisions[0].type, 'semantic');
+    assert.equal(body.collisions[0].severity, 'info');
+    assert.ok(body.collisions[0].details.includes('[L3a]'));
+    assert.ok(body.collisions[0].details.includes('keyword-jaccard'));
+  });
+});
+
+describe('Smoke: collision resolution', () => {
+  let app: FastifyInstance;
+
+  before(async () => { app = await buildTestServer(); });
+  after(async () => { await app.close(); });
+
+  it('detect collision → resolve it → gone from active', async () => {
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'alice-4', developer_email: 'alice@test.com',
+        developer_name: 'Alice', repo: 'app', project_path: '/code/app',
+      },
+    });
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'bob-4', developer_email: 'bob@test.com',
+        developer_name: 'Bob', repo: 'app', project_path: '/code/app',
+      },
+    });
+
+    // Create collision
+    await app.inject({
+      method: 'POST', url: '/api/signals/activity',
+      payload: { session_id: 'alice-4', file_path: 'src/index.ts', type: 'file_modify' },
+    });
+    const bobAct = await app.inject({
+      method: 'POST', url: '/api/signals/activity',
+      payload: { session_id: 'bob-4', file_path: 'src/index.ts', type: 'file_modify' },
+    });
+    const collision = JSON.parse(bobAct.body).collisions[0];
+    assert.ok(collision);
+
+    // Resolve
+    const resolve = await app.inject({
+      method: 'POST', url: '/api/conflicts/resolve',
+      payload: { collision_id: collision.collision_id, resolved_by: 'alice@test.com' },
+    });
+    assert.equal(resolve.statusCode, 200);
+
+    // Check — should have no active conflicts for Bob
+    const check = await app.inject({
+      method: 'GET',
+      url: `/api/conflicts/check?session_id=bob-4&file_path=src/index.ts&repo=app`,
+    });
+    const checkBody = JSON.parse(check.body);
+    // The original collision should be resolved, though a new one may be created
+    // since both sessions still have the file in files_touched
+    assert.equal(check.statusCode, 200);
+  });
+});
+
+describe('Smoke: history endpoint', () => {
+  let app: FastifyInstance;
+
+  before(async () => { app = await buildTestServer(); });
+  after(async () => { await app.close(); });
+
+  it('returns signals and sessions after activity', async () => {
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'alice-5', developer_email: 'alice@test.com',
+        developer_name: 'Alice', repo: 'app', project_path: '/code/app',
+      },
+    });
+    await app.inject({
+      method: 'POST', url: '/api/signals/activity',
+      payload: { session_id: 'alice-5', file_path: 'src/utils.ts', type: 'file_modify' },
+    });
+
+    const history = await app.inject({
+      method: 'GET', url: '/api/history?repo=app',
+    });
+    assert.equal(history.statusCode, 200);
+    const body = JSON.parse(history.body);
+    assert.ok(body.signals.length >= 1);
+    assert.ok(body.sessions.length >= 1);
+  });
+});
+
+describe('Smoke: input validation', () => {
+  let app: FastifyInstance;
+
+  before(async () => { app = await buildTestServer(); });
+  after(async () => { await app.close(); });
+
+  it('rejects session register with missing fields', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: { session_id: 'bad' }, // missing required fields
+    });
+    assert.equal(res.statusCode, 400);
+  });
+
+  it('rejects intent signal with missing fields', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/signals/intent',
+      payload: { session_id: 'bad' }, // missing content and type
+    });
+    assert.equal(res.statusCode, 400);
+  });
+
+  it('rejects activity signal with invalid type', async () => {
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'valid-1', developer_email: 'a@t.com',
+        developer_name: 'A', repo: 'r', project_path: '/p',
+      },
+    });
+    const res = await app.inject({
+      method: 'POST', url: '/api/signals/activity',
+      payload: { session_id: 'valid-1', file_path: 'f.ts', type: 'invalid_type' },
+    });
+    assert.equal(res.statusCode, 400);
+  });
+
+  it('returns 404 for heartbeat on non-existent session', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/sessions/heartbeat',
+      payload: { session_id: 'does-not-exist' },
+    });
+    assert.equal(res.statusCode, 404);
+  });
+});

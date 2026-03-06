@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop, 'releases/**']
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [22]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Unit tests
+        run: npm run test
+
+      - name: Smoke tests
+        run: cd packages/backend && node --import tsx --test src/smoke.test.ts
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -f packages/backend/Dockerfile -t open-hive:test .
+
+      - name: Start container
+        run: |
+          docker run -d --name open-hive-test \
+            -p 3000:3000 \
+            -e PORT=3000 \
+            -e DB_TYPE=sqlite \
+            -e DATABASE_URL=/app/data/hive.db \
+            -e COLLISION_SCOPE=org \
+            -e SEMANTIC_KEYWORDS=true \
+            open-hive:test
+
+      - name: Wait for server
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
+              echo "Server is up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Server failed to start"
+          docker logs open-hive-test
+          exit 1
+
+      - name: Docker smoke test — health
+        run: |
+          HEALTH=$(curl -sf http://localhost:3000/api/health)
+          echo "$HEALTH"
+          echo "$HEALTH" | grep -q '"status":"ok"'
+
+      - name: Docker smoke test — collision flow
+        run: |
+          # Register two developers
+          curl -sf -X POST http://localhost:3000/api/sessions/register \
+            -H 'Content-Type: application/json' \
+            -d '{"session_id":"ci-alice","developer_email":"alice@ci.com","developer_name":"Alice","repo":"ci-repo","project_path":"/ci"}'
+
+          curl -sf -X POST http://localhost:3000/api/sessions/register \
+            -H 'Content-Type: application/json' \
+            -d '{"session_id":"ci-bob","developer_email":"bob@ci.com","developer_name":"Bob","repo":"ci-repo","project_path":"/ci"}'
+
+          # Alice modifies a file
+          curl -sf -X POST http://localhost:3000/api/signals/activity \
+            -H 'Content-Type: application/json' \
+            -d '{"session_id":"ci-alice","file_path":"src/auth.ts","type":"file_modify"}'
+
+          # Bob modifies same file — collision expected
+          RESULT=$(curl -sf -X POST http://localhost:3000/api/signals/activity \
+            -H 'Content-Type: application/json' \
+            -d '{"session_id":"ci-bob","file_path":"src/auth.ts","type":"file_modify"}')
+
+          echo "$RESULT"
+          echo "$RESULT" | grep -q '"severity":"critical"'
+          echo "Collision detected successfully"
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f open-hive-test 2>/dev/null || true

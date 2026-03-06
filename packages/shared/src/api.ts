@@ -1,5 +1,5 @@
 import type {
-  Session, Signal, Collision, CollisionSeverity, SignalType,
+  Session, Signal, Collision, SignalType,
 } from './models.js';
 
 // --- Requests ---
@@ -92,14 +92,4 @@ export interface HistoryRequest {
 export interface HistoryResponse {
   signals: Signal[];
   sessions: Pick<Session, 'session_id' | 'developer_name' | 'repo' | 'intent' | 'started_at'>[];
-}
-
-// --- Webhook ---
-
-export interface WebhookPayload {
-  type: 'collision_detected' | 'collision_resolved';
-  severity: CollisionSeverity;
-  collision: Collision;
-  sessions: Pick<Session, 'developer_name' | 'developer_email' | 'repo' | 'intent'>[];
-  dashboard_url: string;
 }

@@ -1,12 +1,24 @@
 import { dirname } from 'node:path';
-import type { IHiveStore, HistoricalIntent } from '../db/store.js';
+import type { IHiveStore, ISemanticAnalyzer, HistoricalIntent, CollisionSeverity } from '@open-hive/shared';
 import type { Collision, HiveBackendConfig } from '@open-hive/shared';
+
+const TIER_ORDER: Record<string, number> = { L3a: 0, L3b: 1, L3c: 2 };
 
 export class CollisionEngine {
   constructor(
     private store: IHiveStore,
     private config: HiveBackendConfig,
-  ) {}
+    private analyzers: ISemanticAnalyzer[] = [],
+  ) {
+    // Sort analyzers by tier order once at construction time
+    this.analyzers = [...this.analyzers].sort(
+      (a, b) => (TIER_ORDER[a.tier] ?? 99) - (TIER_ORDER[b.tier] ?? 99),
+    );
+  }
+
+  private tierSeverity(tier: 'L3a' | 'L3b' | 'L3c'): CollisionSeverity {
+    return tier === 'L3a' ? 'info' : 'warning';
+  }
 
   async checkFileCollision(session_id: string, file_path: string, repo: string): Promise<Collision[]> {
     const activeSessions = await this.store.getActiveSessions(
@@ -70,7 +82,7 @@ export class CollisionEngine {
   }
 
   async checkIntentCollision(session_id: string, intent: string, repo: string): Promise<Collision[]> {
-    if (!this.config.collision.semantic.keywords_enabled) return [];
+    if (this.analyzers.length === 0) return [];
 
     const activeSessions = await this.store.getActiveSessions(
       this.config.collision.scope === 'repo' ? repo : undefined
@@ -79,24 +91,28 @@ export class CollisionEngine {
     const collisions: Collision[] = [];
 
     for (const other of others) {
-      const score = keywordOverlap(intent, other.intent!);
-      if (score < 0.3) continue;
+      // Run analyzers in tier order; first match wins per pair
+      for (const analyzer of this.analyzers) {
+        const match = await analyzer.compare(intent, other.intent!);
+        if (!match) continue;
 
-      const collision = await this.store.createCollision({
-        session_ids: [session_id, other.session_id],
-        type: 'semantic',
-        severity: 'info',
-        details: `Possible overlap: "${truncate(intent, 60)}" vs "${truncate(other.intent!, 60)}" (score: ${score.toFixed(2)})`,
-        detected_at: new Date().toISOString(),
-      });
-      collisions.push(collision);
+        const collision = await this.store.createCollision({
+          session_ids: [session_id, other.session_id],
+          type: 'semantic',
+          severity: this.tierSeverity(match.tier),
+          details: `[${match.tier}] Possible overlap: "${truncate(intent, 60)}" vs "${truncate(other.intent!, 60)}" (${analyzer.name}, score: ${match.score.toFixed(2)})`,
+          detected_at: new Date().toISOString(),
+        });
+        collisions.push(collision);
+        break; // first match wins
+      }
     }
 
     return collisions;
   }
 
   async checkHistoricalIntentCollision(session_id: string, intent: string, repo: string): Promise<Collision[]> {
-    if (!this.config.collision.semantic.keywords_enabled) return [];
+    if (this.analyzers.length === 0) return [];
 
     const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const recentIntents = await this.store.getRecentIntents({
@@ -127,17 +143,21 @@ export class CollisionEngine {
     for (const [otherSessionId, hi] of bySession) {
       if (activeIds.has(otherSessionId)) continue; // skip active — already checked by checkIntentCollision
 
-      const score = keywordOverlap(intent, hi.intent);
-      if (score < 0.3) continue;
+      // Run analyzers in tier order; first match wins per pair
+      for (const analyzer of this.analyzers) {
+        const match = await analyzer.compare(intent, hi.intent);
+        if (!match) continue;
 
-      const collision = await this.store.createCollision({
-        session_ids: [session_id, otherSessionId],
-        type: 'semantic',
-        severity: 'warning',
-        details: `Historical overlap: "${truncate(intent, 60)}" vs "${truncate(hi.intent, 60)}" (${hi.developer_name}, ${timeSince(hi.timestamp)} ago, score: ${score.toFixed(2)})`,
-        detected_at: new Date().toISOString(),
-      });
-      collisions.push(collision);
+        const collision = await this.store.createCollision({
+          session_ids: [session_id, otherSessionId],
+          type: 'semantic',
+          severity: 'warning',
+          details: `[${match.tier}] Historical overlap: "${truncate(intent, 60)}" vs "${truncate(hi.intent, 60)}" (${hi.developer_name}, ${timeSince(hi.timestamp)} ago, ${analyzer.name}, score: ${match.score.toFixed(2)})`,
+          detected_at: new Date().toISOString(),
+        });
+        collisions.push(collision);
+        break; // first match wins
+      }
     }
 
     return collisions;
@@ -151,41 +171,6 @@ function timeSince(isoTimestamp: string): string {
   if (hours < 24) return `${hours}h`;
   const days = Math.floor(hours / 24);
   return `${days}d`;
-}
-
-const STOP_WORDS = new Set([
-  'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-  'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
-  'should', 'may', 'might', 'shall', 'can', 'need', 'dare', 'ought',
-  'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from', 'as',
-  'into', 'through', 'during', 'before', 'after', 'above', 'below',
-  'and', 'but', 'or', 'nor', 'not', 'so', 'yet', 'both', 'either',
-  'neither', 'each', 'every', 'all', 'any', 'few', 'more', 'most',
-  'other', 'some', 'such', 'no', 'only', 'own', 'same', 'than',
-  'too', 'very', 'just', 'because', 'if', 'when', 'while', 'this',
-  'that', 'these', 'those', 'i', 'me', 'my', 'we', 'our', 'you',
-  'your', 'he', 'him', 'his', 'she', 'her', 'it', 'its', 'they',
-  'them', 'their', 'what', 'which', 'who', 'whom', 'how', 'where',
-  'fix', 'add', 'update', 'change', 'make', 'get', 'set', 'use',
-  'implement', 'create', 'remove', 'delete', 'refactor', 'improve',
-]);
-
-function extractKeywords(text: string): Set<string> {
-  return new Set(
-    text.toLowerCase()
-      .replace(/[^a-z0-9\s-_]/g, ' ')
-      .split(/\s+/)
-      .filter(w => w.length > 2 && !STOP_WORDS.has(w))
-  );
-}
-
-function keywordOverlap(a: string, b: string): number {
-  const ka = extractKeywords(a);
-  const kb = extractKeywords(b);
-  if (ka.size === 0 || kb.size === 0) return 0;
-  const intersection = new Set([...ka].filter(k => kb.has(k)));
-  const union = new Set([...ka, ...kb]);
-  return intersection.size / union.size;
 }
 
 function truncate(s: string, len: number): string {

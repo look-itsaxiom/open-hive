@@ -1,8 +1,10 @@
 import type { FastifyInstance } from 'fastify';
-import type { IHiveStore } from '../db/store.js';
+import type { PortRegistry } from '../port-registry.js';
 import type { HistoryRequest, HistoryResponse } from '@open-hive/shared';
 
-export function historyRoutes(app: FastifyInstance, store: IHiveStore) {
+export function historyRoutes(app: FastifyInstance, registry: PortRegistry) {
+  const { store } = registry;
+
   app.get<{ Querystring: HistoryRequest }>('/api/history', async (req, reply) => {
     try {
       const { limit } = req.query;

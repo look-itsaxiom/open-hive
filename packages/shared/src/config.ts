@@ -35,6 +35,16 @@ export interface HiveBackendConfig {
     token?: string;
     org?: string;
   };
+  alerts: {
+    /** Minimum severity for the built-in generic webhook sink. */
+    min_severity: 'info' | 'warning' | 'critical';
+    /** Generic webhook URLs (raw JSON POST). Skills register their own sinks. */
+    webhook_urls: string[];
+  };
+  identity: {
+    /** Which identity provider to use. 'passthrough' trusts self-reported identity. */
+    provider: 'passthrough' | string;
+  };
   webhooks: {
     urls: string[];
   };

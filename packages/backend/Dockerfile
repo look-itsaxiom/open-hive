@@ -3,7 +3,7 @@ WORKDIR /app
 COPY package.json package-lock.json turbo.json tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/backend/package.json packages/backend/
-RUN npm ci
+RUN npm ci --include=dev
 COPY packages/shared/ packages/shared/
 COPY packages/backend/ packages/backend/
 RUN npx turbo run build --filter=@open-hive/backend
