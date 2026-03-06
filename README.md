@@ -39,6 +39,32 @@ Configurable per deployment:
 - **`repo`** — only detect collisions within the same repository
 - **`org`** — detect collisions across all repositories (default)
 
+## Design Philosophy
+
+Open Hive is a **coordination layer**, not an integration platform. The core codebase defines *what* the hive delivers — collision detection, alerts, identity, storage, semantic analysis — as **generic, cross-org interfaces (ports)**. Specific implementations for particular tools and services (Slack, OAuth, PostgreSQL, etc.) are delivered as **skills (adapters)** that plug into those ports.
+
+This mirrors the hive metaphor: the **hive is the structure** — the honeycomb cells, the architecture, the protocols. The **bees are the implementations** — they plug into the structure and do the specific work for a particular colony.
+
+### Core Ports (built into the codebase)
+
+| Port | Interface | Responsibility |
+|------|-----------|----------------|
+| **Storage** | `IHiveStore` | Persist sessions, signals, and collisions |
+| **Alerts** | `IAlertSink` | Route collision notifications to the right people |
+| **Identity** | `IIdentityProvider` | Authenticate developers and resolve team membership |
+| **Semantic Analysis** | `ISemanticAnalyzer` | Compare developer intents for overlap (L3b, L3c) |
+
+### Skill Adapters (plugged in per deployment)
+
+| Port | Example Skills |
+|------|---------------|
+| Storage | PostgreSQL, MySQL |
+| Alerts | Slack, Teams, Discord, PagerDuty, email |
+| Identity | GitHub OAuth, GitLab OAuth, Azure DevOps OAuth, LDAP, SAML |
+| Semantic Analysis | OpenAI Embeddings, Ollama Embeddings, LLM Comparison |
+
+**The rule:** If it's about *what Open Hive does*, it belongs in the core. If it's about *how a particular org implements it*, it's a skill.
+
 ## Architecture
 
 ```
@@ -58,6 +84,18 @@ Configurable per deployment:
 │  │ Sessions  │  │ Signals  │  │  Collision   │ │
 │  │ Registry  │  │  Store   │  │   Engine     │ │
 │  └───────────┘  └──────────┘  └──────────────┘ │
+│                                                 │
+│  ┌─────────────────────────────────────────────┐│
+│  │              Core Ports                     ││
+│  │  IHiveStore · IAlertSink · IIdentityProvider││
+│  │           ISemanticAnalyzer                 ││
+│  └─────────────────────────────────────────────┘│
+│         ▲          ▲           ▲                │
+│         │          │           │                │
+│    ┌────┴───┐ ┌────┴───┐ ┌────┴────┐           │
+│    │ Skills │ │ Skills │ │ Skills  │           │
+│    │(adaptr)│ │(adaptr)│ │(adaptr) │           │
+│    └────────┘ └────────┘ └─────────┘           │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -200,16 +238,16 @@ Read skills/add-slack/SKILL.md and apply it to this project.
 
 Claude will create the formatter, add environment config, wire it into the server, write tests, and verify the build. See [`skills/README.md`](skills/README.md) for details.
 
-### Extension Points
+### Extension Points (Core Ports)
 
-Skills plug into four core extension points in the backend:
+Skills plug into four core ports defined in the backend:
 
-| Extension Point | Interface | Skills |
-|-----------------|-----------|--------|
-| **Notification Formatters** | `NotificationFormatter` | Slack, Teams, Discord |
-| **Auth Adapters** | `authenticate` / `requireAuth` middleware | GitHub, GitLab, Azure DevOps OAuth |
-| **Store Adapters** | `IHiveStore` | PostgreSQL |
-| **Collision Tiers** | Collision engine hooks | L3b Embeddings, L3c LLM |
+| Port | Interface | Example Skills |
+|------|-----------|----------------|
+| **Alerts** | `IAlertSink` | Slack, Teams, Discord |
+| **Identity** | `IIdentityProvider` | GitHub OAuth, GitLab OAuth, Azure DevOps OAuth |
+| **Storage** | `IHiveStore` | PostgreSQL |
+| **Semantic Analysis** | `ISemanticAnalyzer` | L3b Embeddings, L3c LLM |
 
 ## Configuration
 
@@ -317,25 +355,26 @@ curl -X POST http://localhost:3000/api/sessions/end \
 
 ## Roadmap
 
+### Phase 1 — MVP (complete)
 - [x] Three-level collision detection (L1 file, L2 directory, L3a semantic)
 - [x] Claude Code plugin (6 hooks, 4 commands)
 - [x] Docker deployment
 - [x] Session heartbeat + idle timeout
 - [x] Input validation + error handling
 - [x] Unit test suite (40 tests)
-- [x] Pluggable notification dispatcher with formatter interface
 - [x] Store adapter interface (`IHiveStore`)
-- [x] Auth middleware extension point
-- [x] Skills library (12 integration skills, 12,180 lines)
-  - [x] Notifications: Slack, Teams, Discord
-  - [x] Auth: GitHub OAuth, GitLab OAuth, Azure DevOps OAuth
-  - [x] Storage: PostgreSQL
-  - [x] UI: Web Dashboard
-  - [x] Plugin: MCP Server
-  - [x] Detection: L3b Embedding Similarity, L3c LLM Comparison
-  - [x] Meta: Build-Skill guide
+- [x] Skills library (12 integration skills)
+
+### Phase 2 — Core Ports (next)
+- [ ] **M1: Define Core Ports** — `IAlertSink`, `IIdentityProvider`, `ISemanticAnalyzer` interfaces in `@open-hive/shared`
+- [ ] **M2: Refactor to Ports** — Migrate `NotificationDispatcher` → `IAlertSink`, `authenticate` → `IIdentityProvider`, wire `ISemanticAnalyzer` into `CollisionEngine`
+- [ ] **M3: Skill Contract Update** — Update all 12 skills to target port interfaces, update build-skill guide with port authoring patterns
+- [ ] **M4: L3b/L3c Engine Integration** — Wire `ISemanticAnalyzer` into `CollisionEngine` so L3b/L3c are first-class detection tiers, not bolt-ons
+
+### Phase 3 — Ecosystem
 - [ ] Claude Code marketplace publication
 - [ ] Community-contributed skills
+- [ ] Skill validation / conformance tests
 
 ## License
 
