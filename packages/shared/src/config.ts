@@ -35,6 +35,21 @@ export interface HiveBackendConfig {
     token?: string;
     org?: string;
   };
+  alerts: {
+    sinks: Array<{
+      type: 'webhook' | 'slack' | 'email' | 'log';
+      enabled: boolean;
+      url?: string;
+      channel?: string;
+      min_severity?: 'critical' | 'warning' | 'info';
+    }>;
+  };
+  identity: {
+    provider: 'static' | 'jwt' | 'oauth';
+    required: boolean;
+    jwt_secret?: string;
+    oauth_issuer?: string;
+  };
   webhooks: {
     urls: string[];
   };
