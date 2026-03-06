@@ -1,10 +1,12 @@
 import type { FastifyInstance } from 'fastify';
-import type { IHiveStore } from '../db/store.js';
+import type { PortRegistry } from '../port-registry.js';
 import type { CollisionEngine } from '../services/collision-engine.js';
-import type { NotificationDispatcher } from '../services/notification-dispatcher.js';
+import { buildAlertEvent } from '../port-registry.js';
 import type { CheckConflictsRequest, ResolveCollisionRequest } from '@open-hive/shared';
 
-export function conflictRoutes(app: FastifyInstance, store: IHiveStore, engine: CollisionEngine, dispatcher: NotificationDispatcher) {
+export function conflictRoutes(app: FastifyInstance, registry: PortRegistry, engine: CollisionEngine) {
+  const { store, alerts } = registry;
+
   app.get<{ Querystring: CheckConflictsRequest }>('/api/conflicts/check', async (req, reply) => {
     try {
       const { session_id, file_path, repo } = req.query;
@@ -19,16 +21,8 @@ export function conflictRoutes(app: FastifyInstance, store: IHiveStore, engine: 
       const collisions = await engine.checkFileCollision(session_id, file_path, repo ?? '');
 
       for (const collision of collisions) {
-        const sessionData = await Promise.all(
-          collision.session_ids.map(id => store.getSession(id))
-        );
-        const sessions = sessionData.filter(Boolean).map(s => ({
-          developer_name: s!.developer_name,
-          developer_email: s!.developer_email,
-          repo: s!.repo,
-          intent: s!.intent,
-        }));
-        dispatcher.notify('collision_detected', collision, sessions);
+        const event = await buildAlertEvent(store, 'collision_detected', collision);
+        alerts.dispatch(event);
       }
 
       const nearby = (await store.getActiveSessions(repo))
@@ -65,16 +59,8 @@ export function conflictRoutes(app: FastifyInstance, store: IHiveStore, engine: 
       await store.resolveCollision(collision_id, resolved_by);
 
       if (collision) {
-        const sessionData = await Promise.all(
-          collision.session_ids.map(id => store.getSession(id))
-        );
-        const sessions = sessionData.filter(Boolean).map(s => ({
-          developer_name: s!.developer_name,
-          developer_email: s!.developer_email,
-          repo: s!.repo,
-          intent: s!.intent,
-        }));
-        dispatcher.notify('collision_resolved', collision, sessions);
+        const event = await buildAlertEvent(store, 'collision_resolved', collision);
+        alerts.dispatch(event);
       }
 
       return { ok: true };
