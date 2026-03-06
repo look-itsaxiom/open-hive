@@ -2,14 +2,15 @@
 name: add-teams
 description: Add Microsoft Teams webhook notifications for collision alerts
 category: notification
+port: IAlertSink
 requires: []
 modifies:
-  - packages/backend/src/notifications/teams-formatter.ts
+  - packages/backend/src/services/teams-alert-sink.ts
   - packages/backend/src/env.ts
   - packages/backend/src/server.ts
   - .env.example
 tests:
-  - packages/backend/src/notifications/teams-formatter.test.ts
+  - packages/backend/src/services/teams-alert-sink.test.ts
 ---
 
 # Add Microsoft Teams Webhook Notifications
@@ -22,27 +23,27 @@ This skill adds Microsoft Teams Adaptive Card webhook notifications to Open Hive
 2. The project builds cleanly (`npm run build`).
 3. You have a **Microsoft Teams Incoming Webhook URL**. Create one by:
    - In Teams, go to the channel where you want notifications
-   - Click "..." → "Connectors" (or "Manage channel" → "Connectors")
+   - Click "..." > "Connectors" (or "Manage channel" > "Connectors")
    - Find "Incoming Webhook", click "Configure"
    - Name it "Open Hive", optionally set an icon, click "Create"
    - Copy the webhook URL
 
 ## What This Skill Does
 
-- Creates a `TeamsFormatter` class that implements the `NotificationFormatter` interface.
-- Transforms raw `WebhookPayload` objects into Microsoft Teams Adaptive Card messages with color-coded theme, header, details sections, and timestamp.
-- Provides per-formatter severity filtering via the `TEAMS_MIN_SEVERITY` environment variable.
-- Registers the formatter conditionally — only when `TEAMS_WEBHOOK_URL` is set.
+- Creates a `TeamsAlertSink` class that implements the `IAlertSink` port interface from `@open-hive/shared`.
+- Transforms `AlertEvent` objects into Microsoft Teams Adaptive Card messages with color-coded theme, header, details sections, and timestamp.
+- Provides per-sink severity filtering via the `TEAMS_MIN_SEVERITY` environment variable.
+- Registers the sink conditionally via `PortRegistry` -- only when `TEAMS_WEBHOOK_URL` is set.
 
-## Step 1: Create the Teams Formatter
+## Step 1: Create the Teams Alert Sink
 
-Create `packages/backend/src/notifications/teams-formatter.ts`:
+Create `packages/backend/src/services/teams-alert-sink.ts`:
 
 ```typescript
+import type { IAlertSink, AlertEvent } from '@open-hive/shared';
 import type { CollisionSeverity } from '@open-hive/shared';
-import type { NotificationFormatter, WebhookPayload } from '../services/notification-dispatcher.js';
 
-export interface TeamsFormatterConfig {
+export interface TeamsAlertSinkConfig {
   webhookUrl: string;
   minSeverity: CollisionSeverity;
 }
@@ -55,39 +56,33 @@ const THEME_COLORS: Record<CollisionSeverity, string> = {
   info: 'accent',         // blue
 };
 
-const HEX_COLORS: Record<CollisionSeverity, string> = {
-  critical: '#E74C3C',
-  warning: '#F39C12',
-  info: '#3498DB',
-};
-
 const SEVERITY_EMOJI: Record<CollisionSeverity, string> = {
   critical: '🔴',
   warning: '🟡',
   info: '🔵',
 };
 
-export class TeamsFormatter implements NotificationFormatter {
+export class TeamsAlertSink implements IAlertSink {
   readonly name = 'teams';
 
-  constructor(private config: TeamsFormatterConfig) {}
+  constructor(private config: TeamsAlertSinkConfig) {}
 
-  shouldFire(payload: WebhookPayload): boolean {
+  shouldFire(event: AlertEvent): boolean {
     return (
-      SEVERITY_LEVELS.indexOf(payload.severity) >=
+      SEVERITY_LEVELS.indexOf(event.severity) >=
       SEVERITY_LEVELS.indexOf(this.config.minSeverity)
     );
   }
 
-  format(payload: WebhookPayload): { url: string; body: unknown; headers?: Record<string, string> } {
-    const emoji = SEVERITY_EMOJI[payload.severity];
-    const isResolved = payload.type === 'collision_resolved';
+  async deliver(event: AlertEvent): Promise<void> {
+    const emoji = SEVERITY_EMOJI[event.severity];
+    const isResolved = event.type === 'collision_resolved';
     const title = isResolved
-      ? `${emoji} Collision Resolved — ${payload.collision.type} (${payload.severity})`
-      : `${emoji} Collision Detected — ${payload.collision.type} (${payload.severity})`;
+      ? `${emoji} Collision Resolved — ${event.collision.type} (${event.severity})`
+      : `${emoji} Collision Detected — ${event.collision.type} (${event.severity})`;
 
-    const developers = payload.sessions
-      .map(s => `**${s.developer_name}** (${s.developer_email})${s.intent ? ` — _${s.intent}_` : ''}`)
+    const developers = event.participants
+      .map(p => `**${p.developer_name}** (${p.developer_email})${p.intent ? ` — _${p.intent}_` : ''}`)
       .join('\n\n');
 
     const card = {
@@ -100,30 +95,28 @@ export class TeamsFormatter implements NotificationFormatter {
             $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
             type: 'AdaptiveCard',
             version: '1.4',
-            msteams: {
-              width: 'Full',
-            },
+            msteams: { width: 'Full' },
             body: [
               {
                 type: 'TextBlock',
                 text: title,
                 size: 'Large',
                 weight: 'Bolder',
-                color: THEME_COLORS[payload.severity],
+                color: THEME_COLORS[event.severity],
                 wrap: true,
               },
               {
                 type: 'TextBlock',
-                text: payload.collision.details,
+                text: event.collision.details,
                 wrap: true,
               },
               {
                 type: 'FactSet',
                 facts: [
-                  { title: 'Severity', value: payload.severity.toUpperCase() },
-                  { title: 'Type', value: payload.collision.type },
-                  ...(payload.sessions.length > 0 && payload.sessions[0].repo
-                    ? [{ title: 'Repository', value: payload.sessions[0].repo }]
+                  { title: 'Severity', value: event.severity.toUpperCase() },
+                  { title: 'Type', value: event.collision.type },
+                  ...(event.participants.length > 0 && event.participants[0].repo
+                    ? [{ title: 'Repository', value: event.participants[0].repo }]
                     : []),
                 ],
               },
@@ -140,7 +133,7 @@ export class TeamsFormatter implements NotificationFormatter {
               },
               {
                 type: 'TextBlock',
-                text: `Collision ID: ${payload.collision.collision_id} | ${new Date(payload.timestamp).toLocaleString()}`,
+                text: `Collision ID: ${event.collision.collision_id} | ${new Date(event.timestamp).toLocaleString()}`,
                 size: 'Small',
                 isSubtle: true,
                 spacing: 'Medium',
@@ -151,10 +144,11 @@ export class TeamsFormatter implements NotificationFormatter {
       ],
     };
 
-    return {
-      url: this.config.webhookUrl,
-      body: card,
-    };
+    await fetch(this.config.webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(card),
+    });
   }
 }
 ```
@@ -164,7 +158,9 @@ export class TeamsFormatter implements NotificationFormatter {
 In `packages/backend/src/env.ts`, add to the `loadConfig()` return object:
 
 ```typescript
-// Add after the existing webhooks config:
+import type { CollisionSeverity } from '@open-hive/shared';
+
+// Add after the existing config:
 ...(process.env.TEAMS_WEBHOOK_URL
   ? {
       teams: {
@@ -175,18 +171,20 @@ In `packages/backend/src/env.ts`, add to the `loadConfig()` return object:
   : {}),
 ```
 
-Import `CollisionSeverity` from `@open-hive/shared` if not already imported.
+## Step 3: Register the Sink via PortRegistry
 
-## Step 3: Register the Formatter in server.ts
-
-After the dispatcher is created in `packages/backend/src/server.ts`:
+After the `PortRegistry` is created in `packages/backend/src/server.ts`:
 
 ```typescript
-import { TeamsFormatter } from './notifications/teams-formatter.js';
+import { TeamsAlertSink } from './services/teams-alert-sink.js';
 
-// After: const dispatcher = new NotificationDispatcher(config.webhooks.urls);
-if ((config as any).teams?.webhookUrl) {
-  dispatcher.registerFormatter(new TeamsFormatter((config as any).teams));
+if (process.env.TEAMS_WEBHOOK_URL) {
+  registry.alerts.registerSink(
+    new TeamsAlertSink({
+      webhookUrl: process.env.TEAMS_WEBHOOK_URL,
+      minSeverity: (process.env.TEAMS_MIN_SEVERITY as CollisionSeverity) ?? 'info',
+    })
+  );
 }
 ```
 
@@ -200,16 +198,16 @@ if ((config as any).teams?.webhookUrl) {
 
 ## Step 5: Add Tests
 
-Create `packages/backend/src/notifications/teams-formatter.test.ts`:
+Create `packages/backend/src/services/teams-alert-sink.test.ts`:
 
 ```typescript
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { TeamsFormatter } from './teams-formatter.js';
-import type { WebhookPayload } from '../services/notification-dispatcher.js';
+import { TeamsAlertSink } from './teams-alert-sink.js';
+import type { AlertEvent } from '@open-hive/shared';
 import type { Collision, CollisionSeverity } from '@open-hive/shared';
 
-function makePayload(overrides: Partial<WebhookPayload> = {}): WebhookPayload {
+function makeEvent(overrides: Partial<AlertEvent> = {}): AlertEvent {
   return {
     type: 'collision_detected',
     severity: 'critical' as CollisionSeverity,
@@ -223,7 +221,7 @@ function makePayload(overrides: Partial<WebhookPayload> = {}): WebhookPayload {
       resolved: false,
       resolved_by: null,
     } as Collision,
-    sessions: [
+    participants: [
       { developer_name: 'Alice', developer_email: 'alice@team.com', repo: 'my-app', intent: 'Refactoring auth' },
       { developer_name: 'Bob', developer_email: 'bob@team.com', repo: 'my-app', intent: 'Fixing login bugs' },
     ],
@@ -234,104 +232,35 @@ function makePayload(overrides: Partial<WebhookPayload> = {}): WebhookPayload {
 
 const WEBHOOK_URL = 'https://example.webhook.office.com/webhookb2/test';
 
-describe('TeamsFormatter — format()', () => {
-  it('returns the configured webhook URL', () => {
-    const fmt = new TeamsFormatter({ webhookUrl: WEBHOOK_URL, minSeverity: 'info' });
-    const result = fmt.format(makePayload());
-    assert.equal(result.url, WEBHOOK_URL);
-  });
-
-  it('produces an Adaptive Card attachment', () => {
-    const fmt = new TeamsFormatter({ webhookUrl: WEBHOOK_URL, minSeverity: 'info' });
-    const result = fmt.format(makePayload());
-    const body = result.body as any;
-    assert.equal(body.type, 'message');
-    assert.equal(body.attachments.length, 1);
-    assert.equal(body.attachments[0].contentType, 'application/vnd.microsoft.card.adaptive');
-    assert.equal(body.attachments[0].content.type, 'AdaptiveCard');
-  });
-
-  it('includes collision details in the card body', () => {
-    const fmt = new TeamsFormatter({ webhookUrl: WEBHOOK_URL, minSeverity: 'info' });
-    const result = fmt.format(makePayload());
-    const content = body(result).body;
-    const detailsBlock = content.find((b: any) => b.text?.includes('src/auth/login.ts'));
-    assert.ok(detailsBlock);
-  });
-
-  it('includes developer names', () => {
-    const fmt = new TeamsFormatter({ webhookUrl: WEBHOOK_URL, minSeverity: 'info' });
-    const result = fmt.format(makePayload());
-    const content = JSON.stringify(body(result));
-    assert.ok(content.includes('Alice'));
-    assert.ok(content.includes('Bob'));
-  });
-
-  it('shows severity in FactSet', () => {
-    const fmt = new TeamsFormatter({ webhookUrl: WEBHOOK_URL, minSeverity: 'info' });
-    const result = fmt.format(makePayload({ severity: 'warning' }));
-    const content = JSON.stringify(body(result));
-    assert.ok(content.includes('WARNING'));
-  });
-
-  it('handles collision_resolved events', () => {
-    const fmt = new TeamsFormatter({ webhookUrl: WEBHOOK_URL, minSeverity: 'info' });
-    const result = fmt.format(makePayload({ type: 'collision_resolved' }));
-    const content = JSON.stringify(body(result));
-    assert.ok(content.includes('Resolved'));
-  });
-
-  it('handles sessions with null intent', () => {
-    const fmt = new TeamsFormatter({ webhookUrl: WEBHOOK_URL, minSeverity: 'info' });
-    const result = fmt.format(makePayload({
-      sessions: [
-        { developer_name: 'Alice', developer_email: 'a@t.com', repo: 'r', intent: null },
-      ],
-    }));
-    const content = JSON.stringify(body(result));
-    assert.ok(content.includes('Alice'));
-  });
-
-  it('does not set custom headers', () => {
-    const fmt = new TeamsFormatter({ webhookUrl: WEBHOOK_URL, minSeverity: 'info' });
-    const result = fmt.format(makePayload());
-    assert.equal(result.headers, undefined);
-  });
-});
-
-describe('TeamsFormatter — shouldFire()', () => {
+describe('TeamsAlertSink — shouldFire()', () => {
   it('fires for all severities when min is info', () => {
-    const fmt = new TeamsFormatter({ webhookUrl: WEBHOOK_URL, minSeverity: 'info' });
-    assert.ok(fmt.shouldFire(makePayload({ severity: 'info' })));
-    assert.ok(fmt.shouldFire(makePayload({ severity: 'warning' })));
-    assert.ok(fmt.shouldFire(makePayload({ severity: 'critical' })));
+    const sink = new TeamsAlertSink({ webhookUrl: WEBHOOK_URL, minSeverity: 'info' });
+    assert.ok(sink.shouldFire(makeEvent({ severity: 'info' })));
+    assert.ok(sink.shouldFire(makeEvent({ severity: 'warning' })));
+    assert.ok(sink.shouldFire(makeEvent({ severity: 'critical' })));
   });
 
   it('skips info when min is warning', () => {
-    const fmt = new TeamsFormatter({ webhookUrl: WEBHOOK_URL, minSeverity: 'warning' });
-    assert.ok(!fmt.shouldFire(makePayload({ severity: 'info' })));
-    assert.ok(fmt.shouldFire(makePayload({ severity: 'warning' })));
-    assert.ok(fmt.shouldFire(makePayload({ severity: 'critical' })));
+    const sink = new TeamsAlertSink({ webhookUrl: WEBHOOK_URL, minSeverity: 'warning' });
+    assert.ok(!sink.shouldFire(makeEvent({ severity: 'info' })));
+    assert.ok(sink.shouldFire(makeEvent({ severity: 'warning' })));
+    assert.ok(sink.shouldFire(makeEvent({ severity: 'critical' })));
   });
 
   it('only fires critical when min is critical', () => {
-    const fmt = new TeamsFormatter({ webhookUrl: WEBHOOK_URL, minSeverity: 'critical' });
-    assert.ok(!fmt.shouldFire(makePayload({ severity: 'info' })));
-    assert.ok(!fmt.shouldFire(makePayload({ severity: 'warning' })));
-    assert.ok(fmt.shouldFire(makePayload({ severity: 'critical' })));
+    const sink = new TeamsAlertSink({ webhookUrl: WEBHOOK_URL, minSeverity: 'critical' });
+    assert.ok(!sink.shouldFire(makeEvent({ severity: 'info' })));
+    assert.ok(!sink.shouldFire(makeEvent({ severity: 'warning' })));
+    assert.ok(sink.shouldFire(makeEvent({ severity: 'critical' })));
   });
 });
 
-describe('TeamsFormatter — name', () => {
+describe('TeamsAlertSink — name', () => {
   it('has name "teams"', () => {
-    const fmt = new TeamsFormatter({ webhookUrl: WEBHOOK_URL, minSeverity: 'info' });
-    assert.equal(fmt.name, 'teams');
+    const sink = new TeamsAlertSink({ webhookUrl: WEBHOOK_URL, minSeverity: 'info' });
+    assert.equal(sink.name, 'teams');
   });
 });
-
-function body(result: { body: unknown }): any {
-  return (result.body as any).attachments[0].content;
-}
 ```
 
 ## Step 6: Verify
@@ -340,13 +269,13 @@ function body(result: { body: unknown }): any {
 npm run build && cd packages/backend && node --import tsx --test src/**/*.test.ts
 ```
 
-All existing tests should still pass, plus the new Teams formatter tests.
+All existing tests should still pass, plus the new Teams alert sink tests.
 
 ## Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TEAMS_WEBHOOK_URL` | — | Microsoft Teams Incoming Webhook URL. Formatter only activates when set. |
+| `TEAMS_WEBHOOK_URL` | -- | Microsoft Teams Incoming Webhook URL. Sink only activates when set. |
 | `TEAMS_MIN_SEVERITY` | `info` | Minimum severity to send to Teams (`info`, `warning`, `critical`). |
 
 ### Docker Compose Example
@@ -359,4 +288,4 @@ services:
       TEAMS_MIN_SEVERITY: warning
 ```
 
-The Teams formatter works alongside the generic webhook emitter. Generic webhooks still fire to `WEBHOOK_URLS`; the Teams formatter provides additional richly-formatted notifications.
+The Teams alert sink works alongside any other registered `IAlertSink` implementations (generic webhooks, Slack, Discord, etc.). Each sink fires independently based on its own `shouldFire()` logic. The `AlertDispatcher` manages all sinks via the `PortRegistry`.

@@ -12,20 +12,39 @@ A skill is **not** a plugin or executable code. It is a structured Markdown docu
 - A test suite to verify the integration works
 - Configuration reference for the new environment variables
 
+## Architecture: Port-Based Extensions
+
+Open Hive uses a hexagonal (ports & adapters) architecture. All extension points are defined as TypeScript interfaces (ports) in `@open-hive/shared`. At startup, the backend creates a `PortRegistry` that wires all adapters together:
+
+```
+PortRegistry {
+  store:      IHiveStore          — where data lives
+  identity:   IIdentityProvider   — who is making requests
+  analyzers:  ISemanticAnalyzer[] — how intents are compared
+  alerts:     AlertDispatcher     — where alerts go (holds IAlertSink[])
+}
+```
+
+Each skill targets one of these four ports. See `skills/build-skill/SKILL.md` for the complete guide on creating new skills.
+
 ## Directory structure
 
 ```
 skills/
-  README.md              # This file
-  add-slack/
-    SKILL.md             # Slack webhook integration guide
-  add-discord/
-    SKILL.md             # (future) Discord integration guide
-  add-pagerduty/
-    SKILL.md             # (future) PagerDuty integration guide
+  README.md                    # This file
+  build-skill/SKILL.md         # Meta-guide: how to create new skills
+  add-slack/SKILL.md           # Slack alert sink (IAlertSink)
+  add-teams/SKILL.md           # Teams alert sink (IAlertSink)
+  add-discord/SKILL.md         # Discord alert sink (IAlertSink)
+  add-github-oauth/SKILL.md    # GitHub OAuth (IIdentityProvider)
+  add-gitlab-oauth/SKILL.md    # GitLab OAuth (IIdentityProvider)
+  add-azure-devops-oauth/SKILL.md  # Azure DevOps OAuth (IIdentityProvider)
+  add-embedding-l3b/SKILL.md   # Embedding analyzer (ISemanticAnalyzer)
+  add-llm-l3c/SKILL.md         # LLM analyzer (ISemanticAnalyzer)
+  add-postgres/SKILL.md         # PostgreSQL store (IHiveStore)
+  add-dashboard/SKILL.md        # Web dashboard (consumes PortRegistry)
+  add-mcp-server/SKILL.md       # MCP server (consumes backend API)
 ```
-
-Each skill directory contains exactly one `SKILL.md`. Supporting files (example configs, screenshots) may be added alongside it if needed.
 
 ## SKILL.md format
 
@@ -33,21 +52,20 @@ Every `SKILL.md` starts with YAML frontmatter:
 
 ```yaml
 ---
-name: add-slack                        # Unique skill identifier
+name: add-slack
 description: Add Slack webhook notifications for collision alerts
-category: notification                 # Category for discovery
-requires: []                           # Other skills that must be applied first
-modifies:                              # Files this skill creates or edits
-  - packages/backend/src/notifications/slack-formatter.ts
-  - packages/backend/src/env.ts
+category: notification
+port: IAlertSink
+requires: []
+modifies:
+  - packages/backend/src/services/slack-alert-sink.ts
   - packages/backend/src/server.ts
-  - .env.example
-tests:                                 # Test files this skill creates
-  - packages/backend/src/notifications/slack-formatter.test.ts
+tests:
+  - packages/backend/src/services/slack-alert-sink.test.ts
 ---
 ```
 
-The body contains numbered steps with complete code blocks, exact file paths, and before/after context for edits. The goal is that Claude can follow each step mechanically without needing to search the codebase for context.
+The body contains numbered steps with complete code blocks, exact file paths, and before/after context for edits.
 
 ## How to use a skill
 
@@ -62,22 +80,24 @@ When creating a new integration skill:
 
 1. Create a directory: `skills/add-<name>/`
 2. Write `SKILL.md` with the frontmatter schema shown above.
-3. Include **complete** code blocks -- do not use placeholders or `// TODO` comments. The code in the skill should compile and pass tests as written.
-4. Show before/after context for every file edit so Claude can locate the exact insertion point.
+3. Include **complete** code blocks -- do not use placeholders or `// TODO` comments.
+4. Show before/after context for every file edit.
 5. Always include a test file that covers the core functionality.
 6. End with a Configuration section documenting every new environment variable.
-7. Use the existing `NotificationFormatter` interface for notification integrations -- it provides the `format()` / `shouldFire()` / `name` contract that the `NotificationDispatcher` expects.
+7. All port interfaces must be imported from `@open-hive/shared`.
+8. Registration must go through the `PortRegistry` in `server.ts`.
+
+See `skills/build-skill/SKILL.md` for the complete guide with templates for each port type.
 
 ## Extension points
 
-Skills for notification integrations should implement the `NotificationFormatter` interface exported from `packages/backend/src/services/notification-dispatcher.ts`:
+Skills implement one of four port interfaces from `@open-hive/shared`:
 
-```typescript
-interface NotificationFormatter {
-  name: string;
-  format(payload: WebhookPayload): { url: string; body: unknown; headers?: Record<string, string> };
-  shouldFire(payload: WebhookPayload): boolean;
-}
-```
+| Port | Category | Purpose | Example Skills |
+|------|----------|---------|---------------|
+| `IAlertSink` | notification | Send collision alerts | Slack, Teams, Discord |
+| `IIdentityProvider` | auth | Authenticate developers | GitHub OAuth, GitLab OAuth |
+| `ISemanticAnalyzer` | collision-tier | Compare developer intents | Embeddings (L3b), LLM (L3c) |
+| `IHiveStore` | store | Persist data | PostgreSQL |
 
-The formatter is registered with `dispatcher.registerFormatter()` in `server.ts`, conditionally gated on the presence of the integration's webhook URL environment variable.
+Each adapter is registered via the `PortRegistry` at startup. See the `build-skill` meta-guide for implementation templates and registration patterns.
