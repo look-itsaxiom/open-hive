@@ -3,6 +3,7 @@ import type {
   AlertEvent, AlertParticipant, Collision,
 } from '@open-hive/shared';
 import type { AlertDispatcher } from './services/alert-dispatcher.js';
+import type { DecayService } from './services/decay-service.js';
 
 /**
  * Central wiring point for all port implementations.
@@ -13,6 +14,7 @@ export interface PortRegistry {
   identity: IIdentityProvider;
   analyzers: ISemanticAnalyzer[];
   alerts: AlertDispatcher;
+  decay: DecayService;
 }
 
 /**

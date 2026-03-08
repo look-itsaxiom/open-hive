@@ -15,6 +15,7 @@ import { CollisionEngine } from './services/collision-engine.js';
 import { KeywordAnalyzer } from './services/keyword-analyzer.js';
 import { PassthroughIdentityProvider } from './services/passthrough-identity-provider.js';
 import { AlertDispatcher } from './services/alert-dispatcher.js';
+import { DecayService } from './services/decay-service.js';
 import { createAuthMiddleware } from './middleware/auth.js';
 import type { PortRegistry } from './port-registry.js';
 import { sessionRoutes } from './routes/sessions.js';
@@ -106,8 +107,9 @@ async function buildTestServer(): Promise<FastifyInstance> {
   const engine = new CollisionEngine(store, config, analyzers);
   const identity = new PassthroughIdentityProvider();
   const alerts = new AlertDispatcher();
+  const decay = new DecayService(config.decay);
 
-  const registry: PortRegistry = { store, identity, analyzers, alerts };
+  const registry: PortRegistry = { store, identity, analyzers, alerts, decay };
 
   const app = Fastify({ logger: false });
   await app.register(cors, { origin: true });
@@ -447,7 +449,7 @@ describe('Smoke: signal decay weight', () => {
   before(async () => { app = await buildTestServer(); });
   after(async () => { await app.close(); });
 
-  it('signals are created with weight 1.0', async () => {
+  it('signals are created with weight close to 1.0', async () => {
     await app.inject({
       method: 'POST', url: '/api/sessions/register',
       payload: {
@@ -464,6 +466,49 @@ describe('Smoke: signal decay weight', () => {
     const history = await app.inject({ method: 'GET', url: '/api/history?repo=app' });
     const body = JSON.parse(history.body);
     assert.ok(body.signals.length >= 1);
-    assert.equal(body.signals[0].weight, 1.0);
+    // Decay is now applied on read, so fresh signals should be very close to 1.0
+    assert.ok(body.signals[0].weight > 0.99, 'Fresh signal weight should be near 1.0');
+    assert.ok(body.signals[0].weight <= 1.0, 'Weight should not exceed 1.0');
+  });
+});
+
+describe('Smoke: history returns signals sorted by decay weight', () => {
+  let app: FastifyInstance;
+  before(async () => { app = await buildTestServer(); });
+  after(async () => { await app.close(); });
+
+  it('fresher signals have higher weight and appear first', async () => {
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'order-1', developer_email: 'alice@test.com',
+        developer_name: 'Alice', repo: 'order-repo', project_path: '/code/app',
+      },
+    });
+
+    // Create two signals
+    await app.inject({
+      method: 'POST', url: '/api/signals/activity',
+      payload: { session_id: 'order-1', file_path: 'src/a.ts', type: 'file_modify' },
+    });
+    await app.inject({
+      method: 'POST', url: '/api/signals/activity',
+      payload: { session_id: 'order-1', file_path: 'src/b.ts', type: 'file_modify' },
+    });
+
+    const history = await app.inject({ method: 'GET', url: '/api/history?repo=order-repo' });
+    const body = JSON.parse(history.body);
+    assert.ok(body.signals.length >= 2);
+    // All signals should have weight property
+    for (const signal of body.signals) {
+      assert.ok(typeof signal.weight === 'number', 'Signal should have weight');
+      assert.ok(signal.weight > 0, 'Weight should be positive');
+      assert.ok(signal.weight <= 1.0, 'Weight should not exceed 1.0');
+    }
+    // Should be sorted by weight descending (or equal for near-simultaneous signals)
+    for (let i = 1; i < body.signals.length; i++) {
+      assert.ok(body.signals[i - 1].weight >= body.signals[i].weight,
+        'Signals should be sorted by weight descending');
+    }
   });
 });
