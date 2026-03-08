@@ -24,6 +24,7 @@ import { conflictRoutes } from './routes/conflicts.js';
 import { historyRoutes } from './routes/history.js';
 import { richSignalRoutes } from './routes/rich-signals.js';
 import { mailRoutes } from './routes/mail.js';
+import { nerveRoutes } from './routes/nerves.js';
 import type { HiveBackendConfig } from '@open-hive/shared';
 
 function createTestConfig(): HiveBackendConfig {
@@ -151,6 +152,7 @@ async function buildTestServer(): Promise<FastifyInstance> {
   historyRoutes(app, registry);
   richSignalRoutes(app, registry, engine);
   mailRoutes(app, registry);
+  nerveRoutes(app, registry);
 
   return app;
 }
@@ -760,6 +762,104 @@ describe('Smoke: agent mail', () => {
         type: 'invalid_type',
         subject: 'test',
         content: 'test',
+      },
+    });
+    assert.equal(res.statusCode, 400);
+  });
+});
+
+// ─── Nerve Registration Smoke Tests ─────────────────────────
+
+describe('Smoke: nerve registration', () => {
+  let app: FastifyInstance;
+  before(async () => { app = await buildTestServer(); });
+  after(async () => { await app.close(); });
+
+  it('registers a Claude Code nerve with agent card', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/nerves/register',
+      payload: {
+        nerve_type: 'claude-code',
+        agent_card: {
+          agent_id: 'cc-alice-001',
+          name: 'Alice Claude Code',
+          description: 'Claude Code session for Alice',
+          version: '1.0.0',
+          human_client: {
+            email: 'alice@test.com',
+            display_name: 'Alice',
+          },
+          capabilities: {
+            sensory: ['file_modify', 'file_read', 'intent_declared', 'outcome_achieved'],
+            motor: ['context_injection', 'collision_alert', 'mail_delivery'],
+          },
+        },
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.ok, true);
+    assert.ok(body.nerve.nerve_id);
+    assert.equal(body.nerve.nerve_type, 'claude-code');
+    assert.equal(body.nerve.agent_card.agent_id, 'cc-alice-001');
+    assert.equal(body.nerve.agent_card.status, 'active');
+  });
+
+  it('lists active nerves', async () => {
+    const res = await app.inject({
+      method: 'GET', url: '/api/nerves/active',
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.ok(body.nerves.length >= 1);
+  });
+
+  it('filters nerves by type', async () => {
+    const res = await app.inject({
+      method: 'GET', url: '/api/nerves/active?type=claude-code',
+    });
+    const body = JSON.parse(res.body);
+    assert.ok(body.nerves.every((n: any) => n.nerve_type === 'claude-code'));
+  });
+
+  it('nerve heartbeat updates last_seen', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/nerves/heartbeat',
+      payload: { agent_id: 'cc-alice-001' },
+    });
+    assert.equal(res.statusCode, 200);
+  });
+
+  it('returns 404 for heartbeat on unknown nerve', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/nerves/heartbeat',
+      payload: { agent_id: 'nonexistent' },
+    });
+    assert.equal(res.statusCode, 404);
+  });
+
+  it('deregisters a nerve', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/nerves/deregister',
+      payload: { agent_id: 'cc-alice-001' },
+    });
+    assert.equal(res.statusCode, 200);
+
+    // Should not appear in active nerves
+    const check = await app.inject({
+      method: 'GET', url: '/api/nerves/active',
+    });
+    const body = JSON.parse(check.body);
+    assert.ok(!body.nerves.some((n: any) => n.agent_card.agent_id === 'cc-alice-001'),
+      'Deregistered nerve should not appear in active list');
+  });
+
+  it('rejects registration with missing agent_card fields', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/nerves/register',
+      payload: {
+        nerve_type: 'test',
+        agent_card: { name: 'incomplete' }, // missing agent_id and human_client
       },
     });
     assert.equal(res.statusCode, 400);
