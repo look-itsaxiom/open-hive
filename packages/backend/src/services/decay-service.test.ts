@@ -10,9 +10,10 @@ describe('DecayService', () => {
     floor: 0.01,
   });
 
-  it('returns 1.0 for a brand new signal', () => {
+  it('returns ~1.0 for a brand new signal', () => {
     const now = new Date().toISOString();
-    assert.equal(service.calculateWeight(now, 'file_modify'), 1.0);
+    const weight = service.calculateWeight(now, 'file_modify');
+    assert.ok(weight > 0.999, `Expected ~1.0, got ${weight}`);
   });
 
   it('returns ~0.5 after one half-life', () => {
