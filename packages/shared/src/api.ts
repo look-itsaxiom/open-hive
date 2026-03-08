@@ -1,5 +1,5 @@
 import type {
-  Session, Signal, Collision, SignalType,
+  Session, Signal, Collision, SignalType, AgentMail, AgentMailType,
 } from './models.js';
 
 // --- Requests ---
@@ -107,4 +107,25 @@ export interface RichSignalResponse {
   ok: boolean;
   signal: Signal;
   collisions: Collision[];
+}
+
+// --- Agent Mail ---
+
+export interface SendMailRequest {
+  from_session_id?: string;     // optional — null means consciousness-generated
+  to_session_id?: string;       // optional — target specific session
+  to_context_id?: string;       // optional — target a workstream
+  type: AgentMailType;
+  subject: string;
+  content: string;
+}
+
+export interface SendMailResponse {
+  ok: boolean;
+  mail: AgentMail;
+}
+
+export interface CheckMailResponse {
+  ok: boolean;
+  mail: AgentMail[];
 }
