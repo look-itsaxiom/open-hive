@@ -22,6 +22,7 @@ import { sessionRoutes } from './routes/sessions.js';
 import { signalRoutes } from './routes/signals.js';
 import { conflictRoutes } from './routes/conflicts.js';
 import { historyRoutes } from './routes/history.js';
+import { richSignalRoutes } from './routes/rich-signals.js';
 import type { HiveBackendConfig } from '@open-hive/shared';
 
 function createTestConfig(): HiveBackendConfig {
@@ -120,6 +121,7 @@ async function buildTestServer(): Promise<FastifyInstance> {
   signalRoutes(app, registry, engine);
   conflictRoutes(app, registry, engine);
   historyRoutes(app, registry);
+  richSignalRoutes(app, registry, engine);
 
   return app;
 }
@@ -510,5 +512,104 @@ describe('Smoke: history returns signals sorted by decay weight', () => {
       assert.ok(body.signals[i - 1].weight >= body.signals[i].weight,
         'Signals should be sorted by weight descending');
     }
+  });
+});
+
+describe('Smoke: rich signal endpoint', () => {
+  let app: FastifyInstance;
+  before(async () => { app = await buildTestServer(); });
+  after(async () => { await app.close(); });
+
+  it('accepts intent_declared signal type', async () => {
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'rich-1', developer_email: 'alice@test.com',
+        developer_name: 'Alice', repo: 'app', project_path: '/code/app',
+      },
+    });
+
+    const res = await app.inject({
+      method: 'POST', url: '/api/signals/rich',
+      payload: {
+        session_id: 'rich-1',
+        type: 'intent_declared',
+        content: 'Refactoring the authentication middleware for JWT support',
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.ok, true);
+    assert.ok(body.signal);
+    assert.equal(body.signal.type, 'intent_declared');
+    assert.ok(typeof body.signal.weight === 'number');
+  });
+
+  it('accepts blocker_hit with context_id', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/signals/rich',
+      payload: {
+        session_id: 'rich-1',
+        type: 'blocker_hit',
+        content: 'Waiting on database migration to complete before proceeding',
+        context_id: 'auth-refactor-2026',
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.ok, true);
+    assert.equal(body.signal.type, 'blocker_hit');
+  });
+
+  it('accepts outcome_achieved signal', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/signals/rich',
+      payload: {
+        session_id: 'rich-1',
+        type: 'outcome_achieved',
+        content: 'JWT middleware refactor completed and merged to main',
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.ok, true);
+    assert.equal(body.signal.type, 'outcome_achieved');
+  });
+
+  it('rejects unknown signal type', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/signals/rich',
+      payload: {
+        session_id: 'rich-1',
+        type: 'nonexistent_type',
+        content: 'test',
+      },
+    });
+    assert.equal(res.statusCode, 400);
+  });
+
+  it('triggers collision detection for intent_declared', async () => {
+    // Register Bob with overlapping intent
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'rich-2', developer_email: 'bob@test.com',
+        developer_name: 'Bob', repo: 'app', project_path: '/code/app',
+      },
+    });
+
+    // Bob declares overlapping intent via rich signal
+    const res = await app.inject({
+      method: 'POST', url: '/api/signals/rich',
+      payload: {
+        session_id: 'rich-2',
+        type: 'intent_declared',
+        content: 'Refactoring the authentication JWT token handling',
+      },
+    });
+    const body = JSON.parse(res.body);
+    assert.equal(body.ok, true);
+    // Should detect semantic overlap with Alice's earlier intent_declared
+    assert.ok(body.collisions.length >= 1, 'Should detect semantic collision');
   });
 });
