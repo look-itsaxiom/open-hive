@@ -30,7 +30,8 @@ export function createSQLiteDB(dbPath: string): DatabaseSync {
       type TEXT NOT NULL,
       content TEXT NOT NULL,
       file_path TEXT,
-      semantic_area TEXT
+      semantic_area TEXT,
+      weight REAL NOT NULL DEFAULT 1.0
     );
     CREATE TABLE IF NOT EXISTS collisions (
       collision_id TEXT PRIMARY KEY,

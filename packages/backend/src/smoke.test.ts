@@ -37,6 +37,7 @@ function createTestConfig(): HiveBackendConfig {
     },
     alerts: { min_severity: 'info', webhook_urls: [] },
     identity: { provider: 'passthrough' },
+    decay: { enabled: true, default_half_life_seconds: 86400, type_overrides: {}, floor: 0.01 },
     webhooks: { urls: [] },
     session: { heartbeat_interval_seconds: 30, idle_timeout_seconds: 300 },
   };
@@ -67,7 +68,8 @@ function createTestDB(): DatabaseSync {
       type TEXT NOT NULL,
       content TEXT NOT NULL,
       file_path TEXT,
-      semantic_area TEXT
+      semantic_area TEXT,
+      weight REAL NOT NULL DEFAULT 1.0
     );
     CREATE TABLE IF NOT EXISTS collisions (
       collision_id TEXT PRIMARY KEY,
@@ -437,5 +439,31 @@ describe('Smoke: input validation', () => {
       payload: { session_id: 'does-not-exist' },
     });
     assert.equal(res.statusCode, 404);
+  });
+});
+
+describe('Smoke: signal decay weight', () => {
+  let app: FastifyInstance;
+  before(async () => { app = await buildTestServer(); });
+  after(async () => { await app.close(); });
+
+  it('signals are created with weight 1.0', async () => {
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'decay-1', developer_email: 'alice@test.com',
+        developer_name: 'Alice', repo: 'app', project_path: '/code/app',
+      },
+    });
+
+    await app.inject({
+      method: 'POST', url: '/api/signals/activity',
+      payload: { session_id: 'decay-1', file_path: 'src/foo.ts', type: 'file_modify' },
+    });
+
+    const history = await app.inject({ method: 'GET', url: '/api/history?repo=app' });
+    const body = JSON.parse(history.body);
+    assert.ok(body.signals.length >= 1);
+    assert.equal(body.signals[0].weight, 1.0);
   });
 });
