@@ -24,9 +24,19 @@ export interface Signal {
   content: string;
   file_path: string | null;
   semantic_area: string | null;
+  weight: number;  // 0.0 (fully decayed) to 1.0 (fresh). Initialized to 1.0.
 }
 
-export type SignalType = 'prompt' | 'file_modify' | 'file_read' | 'search' | 'explicit';
+export type SignalType =
+  // Phase 2 (existing)
+  | 'prompt' | 'file_modify' | 'file_read' | 'search' | 'explicit'
+  // Phase 3 — richer taxonomy
+  | 'intent_declared'        // what the agent's human wants to accomplish
+  | 'outcome_achieved'       // work completed, merged, deployed
+  | 'blocker_hit'            // something is stuck
+  | 'context_needed'         // agent needs more information to proceed
+  | 'dependency_discovered'  // this work depends on something else
+  | 'state_report';          // periodic snapshot from an orchestration nerve
 
 // Collision represents detected overlap between sessions
 export interface Collision {
