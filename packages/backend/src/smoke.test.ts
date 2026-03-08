@@ -753,3 +753,56 @@ describe('Smoke: agent mail', () => {
     assert.equal(res.statusCode, 400);
   });
 });
+
+describe('Smoke: auto-generated mail on collision', () => {
+  let app: FastifyInstance;
+  before(async () => { app = await buildTestServer(); });
+  after(async () => { await app.close(); });
+
+  it('collision detection auto-generates mail to both participants', async () => {
+    // Register Alice and Bob
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'automail-alice', developer_email: 'alice@test.com',
+        developer_name: 'Alice', repo: 'automail-repo', project_path: '/code/app',
+      },
+    });
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'automail-bob', developer_email: 'bob@test.com',
+        developer_name: 'Bob', repo: 'automail-repo', project_path: '/code/app',
+      },
+    });
+
+    // Alice modifies a file
+    await app.inject({
+      method: 'POST', url: '/api/signals/activity',
+      payload: { session_id: 'automail-alice', file_path: 'src/shared.ts', type: 'file_modify' },
+    });
+
+    // Bob modifies the same file → collision
+    const bobAct = await app.inject({
+      method: 'POST', url: '/api/signals/activity',
+      payload: { session_id: 'automail-bob', file_path: 'src/shared.ts', type: 'file_modify' },
+    });
+    const bobBody = JSON.parse(bobAct.body);
+    assert.ok(bobBody.collisions.length >= 1, 'Should detect collision');
+
+    // Both should have unread mail about the collision
+    const aliceMail = await app.inject({
+      method: 'GET', url: '/api/mail/check?session_id=automail-alice',
+    });
+    const aliceMailBody = JSON.parse(aliceMail.body);
+    assert.ok(aliceMailBody.mail.some((m: any) => m.type === 'collision_alert'),
+      'Alice should have collision_alert mail');
+
+    const bobMail = await app.inject({
+      method: 'GET', url: '/api/mail/check?session_id=automail-bob',
+    });
+    const bobMailBody = JSON.parse(bobMail.body);
+    assert.ok(bobMailBody.mail.some((m: any) => m.type === 'collision_alert'),
+      'Bob should have collision_alert mail');
+  });
+});

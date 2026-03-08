@@ -46,6 +46,19 @@ export function signalRoutes(app: FastifyInstance, registry: PortRegistry, engin
       for (const collision of collisions) {
         const event = await buildAlertEvent(store, 'collision_detected', collision);
         alerts.dispatch(event);
+
+        // Consciousness generates mail for each participant
+        for (const sid of collision.session_ids) {
+          await store.createMail({
+            from_session_id: null,
+            to_session_id: sid,
+            to_context_id: null,
+            type: 'collision_alert',
+            subject: `Collision detected: ${collision.type} (${collision.severity})`,
+            content: collision.details,
+            created_at: new Date().toISOString(),
+          });
+        }
       }
 
       return { ok: true, collisions } satisfies IntentSignalResponse;
@@ -105,6 +118,19 @@ export function signalRoutes(app: FastifyInstance, registry: PortRegistry, engin
         for (const collision of collisions) {
           const event = await buildAlertEvent(store, 'collision_detected', collision);
           alerts.dispatch(event);
+
+          // Consciousness generates mail for each participant
+          for (const sid of collision.session_ids) {
+            await store.createMail({
+              from_session_id: null,
+              to_session_id: sid,
+              to_context_id: null,
+              type: 'collision_alert',
+              subject: `Collision detected: ${collision.type} (${collision.severity})`,
+              content: collision.details,
+              created_at: new Date().toISOString(),
+            });
+          }
         }
       }
 
