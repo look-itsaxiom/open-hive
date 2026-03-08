@@ -7,7 +7,7 @@
  */
 
 import type {
-  Session, Signal, Collision, CollisionSeverity,
+  Session, Signal, Collision, CollisionSeverity, AgentMail, AgentCard, Nerve,
 } from './models.js';
 
 // ─── IHiveStore ──────────────────────────────────────────────────────────────
@@ -44,6 +44,30 @@ export interface IHiveStore {
   createCollision(c: Omit<Collision, 'collision_id' | 'resolved' | 'resolved_by'>): Promise<Collision>;
   getActiveCollisions(session_id?: string): Promise<Collision[]>;
   resolveCollision(collision_id: string, resolved_by: string): Promise<void>;
+
+  // --- Agent Mail ---
+  createMail(m: Omit<AgentMail, 'mail_id' | 'read_at' | 'weight'>): Promise<AgentMail>;
+  getUnreadMail(session_id: string): Promise<AgentMail[]>;
+  getMailByContext(context_id: string): Promise<AgentMail[]>;
+  markMailRead(mail_id: string): Promise<void>;
+}
+
+// ─── INerveRegistry ──────────────────────────────────────────────────────────
+
+/** Nerve registration port — manages the registry of connected nerves. */
+export interface INerveRegistry {
+  /** Human-readable name for logging. */
+  readonly name: string;
+  /** Register a new nerve with its agent card. */
+  registerNerve(card: AgentCard, nerve_type: string): Promise<Nerve>;
+  /** Get a nerve by agent_id. */
+  getNerve(agent_id: string): Promise<Nerve | null>;
+  /** List active nerves, optionally filtered by type. */
+  getActiveNerves(nerve_type?: string): Promise<Nerve[]>;
+  /** Update the last_seen timestamp for a nerve. */
+  updateLastSeen(agent_id: string): Promise<void>;
+  /** Deregister a nerve. */
+  deregisterNerve(agent_id: string): Promise<void>;
 }
 
 // ─── IAlertSink ──────────────────────────────────────────────────────────────

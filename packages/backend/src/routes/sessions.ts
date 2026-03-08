@@ -60,11 +60,39 @@ export function sessionRoutes(app: FastifyInstance, registry: PortRegistry, _eng
           timestamp: hi.timestamp,
         }));
 
+      const unreadMail = await store.getUnreadMail(session_id);
+
+      // Auto-register a Claude Code nerve for this session
+      const agent_id = `cc-${session_id}`;
+      const existingNerve = await registry.nerves.getNerve(agent_id);
+      if (!existingNerve) {
+        await registry.nerves.registerNerve({
+          agent_id,
+          name: `${developer_name} Claude Code`,
+          description: 'Auto-registered Claude Code session',
+          version: '1.0.0',
+          human_client: {
+            email: developer_email,
+            display_name: developer_name,
+          },
+          capabilities: {
+            sensory: ['file_modify', 'file_read', 'prompt', 'intent_declared'],
+            motor: ['context_injection', 'collision_alert', 'mail_delivery'],
+          },
+          registered_at: '',
+          last_seen: '',
+          status: 'active',
+        }, 'claude-code');
+      } else {
+        await registry.nerves.updateLastSeen(agent_id);
+      }
+
       return {
         ok: true,
         active_collisions,
         active_sessions_in_repo,
         recent_historical_intents,
+        unread_mail: unreadMail,
       } satisfies RegisterSessionResponse;
     } catch (err) {
       req.log.error(err, 'Failed to register session');
@@ -107,6 +135,11 @@ export function sessionRoutes(app: FastifyInstance, registry: PortRegistry, _eng
       }
 
       await store.endSession(session_id);
+
+      // Update nerve last_seen (ignore if nerve doesn't exist for older sessions)
+      const agent_id = `cc-${session_id}`;
+      await registry.nerves.updateLastSeen(agent_id).catch(() => {});
+
       return { ok: true };
     } catch (err) {
       req.log.error(err, 'Failed to end session');

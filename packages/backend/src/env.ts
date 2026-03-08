@@ -26,6 +26,12 @@ export function loadConfig(): HiveBackendConfig {
     identity: {
       provider: process.env.IDENTITY_PROVIDER ?? 'passthrough',
     },
+    decay: {
+      enabled: process.env.DECAY_ENABLED !== 'false',
+      default_half_life_seconds: parseInt(process.env.DECAY_HALF_LIFE ?? '86400', 10), // 24h default
+      type_overrides: {},
+      floor: parseFloat(process.env.DECAY_FLOOR ?? '0.01'),
+    },
     webhooks: {
       urls: process.env.WEBHOOK_URLS?.split(',').filter(Boolean) ?? [],
     },
