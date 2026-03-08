@@ -93,3 +93,18 @@ export interface HistoryResponse {
   signals: Signal[];
   sessions: Pick<Session, 'session_id' | 'developer_name' | 'repo' | 'intent' | 'started_at'>[];
 }
+
+export interface RichSignalRequest {
+  session_id: string;
+  type: SignalType;
+  content: string;
+  file_path?: string;
+  semantic_area?: string;
+  context_id?: string;  // A2A-inspired: groups related work
+}
+
+export interface RichSignalResponse {
+  ok: boolean;
+  signal: Signal;
+  collisions: Collision[];
+}

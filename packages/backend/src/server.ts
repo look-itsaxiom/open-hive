@@ -7,6 +7,7 @@ import { KeywordAnalyzer } from './services/keyword-analyzer.js';
 import { PassthroughIdentityProvider } from './services/passthrough-identity-provider.js';
 import { AlertDispatcher } from './services/alert-dispatcher.js';
 import { GenericWebhookSink } from './services/generic-webhook-sink.js';
+import { DecayService } from './services/decay-service.js';
 import { createAuthMiddleware } from './middleware/auth.js';
 import type { PortRegistry } from './port-registry.js';
 import type { ISemanticAnalyzer } from '@open-hive/shared';
@@ -14,6 +15,7 @@ import { sessionRoutes } from './routes/sessions.js';
 import { signalRoutes } from './routes/signals.js';
 import { conflictRoutes } from './routes/conflicts.js';
 import { historyRoutes } from './routes/history.js';
+import { richSignalRoutes } from './routes/rich-signals.js';
 
 const config = loadConfig();
 const store = createStore(config);
@@ -46,12 +48,16 @@ for (const url of config.webhooks.urls) {
   }
 }
 
+// --- Wire decay service ---
+const decay = new DecayService(config.decay);
+
 // --- Build registry ---
 const registry: PortRegistry = {
   store,
   identity,
   analyzers,
   alerts: alertDispatcher,
+  decay,
 };
 
 const app = Fastify({ logger: true });
@@ -65,6 +71,7 @@ sessionRoutes(app, registry, engine);
 signalRoutes(app, registry, engine);
 conflictRoutes(app, registry, engine);
 historyRoutes(app, registry);
+richSignalRoutes(app, registry, engine);
 
 // Periodic cleanup of stale sessions
 const cleanupIntervalMs = config.session.heartbeat_interval_seconds * 1000;

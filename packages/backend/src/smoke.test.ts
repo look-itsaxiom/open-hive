@@ -15,12 +15,14 @@ import { CollisionEngine } from './services/collision-engine.js';
 import { KeywordAnalyzer } from './services/keyword-analyzer.js';
 import { PassthroughIdentityProvider } from './services/passthrough-identity-provider.js';
 import { AlertDispatcher } from './services/alert-dispatcher.js';
+import { DecayService } from './services/decay-service.js';
 import { createAuthMiddleware } from './middleware/auth.js';
 import type { PortRegistry } from './port-registry.js';
 import { sessionRoutes } from './routes/sessions.js';
 import { signalRoutes } from './routes/signals.js';
 import { conflictRoutes } from './routes/conflicts.js';
 import { historyRoutes } from './routes/history.js';
+import { richSignalRoutes } from './routes/rich-signals.js';
 import type { HiveBackendConfig } from '@open-hive/shared';
 
 function createTestConfig(): HiveBackendConfig {
@@ -37,6 +39,7 @@ function createTestConfig(): HiveBackendConfig {
     },
     alerts: { min_severity: 'info', webhook_urls: [] },
     identity: { provider: 'passthrough' },
+    decay: { enabled: true, default_half_life_seconds: 86400, type_overrides: {}, floor: 0.01 },
     webhooks: { urls: [] },
     session: { heartbeat_interval_seconds: 30, idle_timeout_seconds: 300 },
   };
@@ -67,7 +70,8 @@ function createTestDB(): DatabaseSync {
       type TEXT NOT NULL,
       content TEXT NOT NULL,
       file_path TEXT,
-      semantic_area TEXT
+      semantic_area TEXT,
+      weight REAL NOT NULL DEFAULT 1.0
     );
     CREATE TABLE IF NOT EXISTS collisions (
       collision_id TEXT PRIMARY KEY,
@@ -104,8 +108,9 @@ async function buildTestServer(): Promise<FastifyInstance> {
   const engine = new CollisionEngine(store, config, analyzers);
   const identity = new PassthroughIdentityProvider();
   const alerts = new AlertDispatcher();
+  const decay = new DecayService(config.decay);
 
-  const registry: PortRegistry = { store, identity, analyzers, alerts };
+  const registry: PortRegistry = { store, identity, analyzers, alerts, decay };
 
   const app = Fastify({ logger: false });
   await app.register(cors, { origin: true });
@@ -116,6 +121,7 @@ async function buildTestServer(): Promise<FastifyInstance> {
   signalRoutes(app, registry, engine);
   conflictRoutes(app, registry, engine);
   historyRoutes(app, registry);
+  richSignalRoutes(app, registry, engine);
 
   return app;
 }
@@ -437,5 +443,173 @@ describe('Smoke: input validation', () => {
       payload: { session_id: 'does-not-exist' },
     });
     assert.equal(res.statusCode, 404);
+  });
+});
+
+describe('Smoke: signal decay weight', () => {
+  let app: FastifyInstance;
+  before(async () => { app = await buildTestServer(); });
+  after(async () => { await app.close(); });
+
+  it('signals are created with weight close to 1.0', async () => {
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'decay-1', developer_email: 'alice@test.com',
+        developer_name: 'Alice', repo: 'app', project_path: '/code/app',
+      },
+    });
+
+    await app.inject({
+      method: 'POST', url: '/api/signals/activity',
+      payload: { session_id: 'decay-1', file_path: 'src/foo.ts', type: 'file_modify' },
+    });
+
+    const history = await app.inject({ method: 'GET', url: '/api/history?repo=app' });
+    const body = JSON.parse(history.body);
+    assert.ok(body.signals.length >= 1);
+    // Decay is now applied on read, so fresh signals should be very close to 1.0
+    assert.ok(body.signals[0].weight > 0.99, 'Fresh signal weight should be near 1.0');
+    assert.ok(body.signals[0].weight <= 1.0, 'Weight should not exceed 1.0');
+  });
+});
+
+describe('Smoke: history returns signals sorted by decay weight', () => {
+  let app: FastifyInstance;
+  before(async () => { app = await buildTestServer(); });
+  after(async () => { await app.close(); });
+
+  it('fresher signals have higher weight and appear first', async () => {
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'order-1', developer_email: 'alice@test.com',
+        developer_name: 'Alice', repo: 'order-repo', project_path: '/code/app',
+      },
+    });
+
+    // Create two signals
+    await app.inject({
+      method: 'POST', url: '/api/signals/activity',
+      payload: { session_id: 'order-1', file_path: 'src/a.ts', type: 'file_modify' },
+    });
+    await app.inject({
+      method: 'POST', url: '/api/signals/activity',
+      payload: { session_id: 'order-1', file_path: 'src/b.ts', type: 'file_modify' },
+    });
+
+    const history = await app.inject({ method: 'GET', url: '/api/history?repo=order-repo' });
+    const body = JSON.parse(history.body);
+    assert.ok(body.signals.length >= 2);
+    // All signals should have weight property
+    for (const signal of body.signals) {
+      assert.ok(typeof signal.weight === 'number', 'Signal should have weight');
+      assert.ok(signal.weight > 0, 'Weight should be positive');
+      assert.ok(signal.weight <= 1.0, 'Weight should not exceed 1.0');
+    }
+    // Should be sorted by weight descending (or equal for near-simultaneous signals)
+    for (let i = 1; i < body.signals.length; i++) {
+      assert.ok(body.signals[i - 1].weight >= body.signals[i].weight,
+        'Signals should be sorted by weight descending');
+    }
+  });
+});
+
+describe('Smoke: rich signal endpoint', () => {
+  let app: FastifyInstance;
+  before(async () => { app = await buildTestServer(); });
+  after(async () => { await app.close(); });
+
+  it('accepts intent_declared signal type', async () => {
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'rich-1', developer_email: 'alice@test.com',
+        developer_name: 'Alice', repo: 'app', project_path: '/code/app',
+      },
+    });
+
+    const res = await app.inject({
+      method: 'POST', url: '/api/signals/rich',
+      payload: {
+        session_id: 'rich-1',
+        type: 'intent_declared',
+        content: 'Refactoring the authentication middleware for JWT support',
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.ok, true);
+    assert.ok(body.signal);
+    assert.equal(body.signal.type, 'intent_declared');
+    assert.ok(typeof body.signal.weight === 'number');
+  });
+
+  it('accepts blocker_hit with context_id', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/signals/rich',
+      payload: {
+        session_id: 'rich-1',
+        type: 'blocker_hit',
+        content: 'Waiting on database migration to complete before proceeding',
+        context_id: 'auth-refactor-2026',
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.ok, true);
+    assert.equal(body.signal.type, 'blocker_hit');
+  });
+
+  it('accepts outcome_achieved signal', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/signals/rich',
+      payload: {
+        session_id: 'rich-1',
+        type: 'outcome_achieved',
+        content: 'JWT middleware refactor completed and merged to main',
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.ok, true);
+    assert.equal(body.signal.type, 'outcome_achieved');
+  });
+
+  it('rejects unknown signal type', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/signals/rich',
+      payload: {
+        session_id: 'rich-1',
+        type: 'nonexistent_type',
+        content: 'test',
+      },
+    });
+    assert.equal(res.statusCode, 400);
+  });
+
+  it('triggers collision detection for intent_declared', async () => {
+    // Register Bob with overlapping intent
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'rich-2', developer_email: 'bob@test.com',
+        developer_name: 'Bob', repo: 'app', project_path: '/code/app',
+      },
+    });
+
+    // Bob declares overlapping intent via rich signal
+    const res = await app.inject({
+      method: 'POST', url: '/api/signals/rich',
+      payload: {
+        session_id: 'rich-2',
+        type: 'intent_declared',
+        content: 'Refactoring the authentication JWT token handling',
+      },
+    });
+    const body = JSON.parse(res.body);
+    assert.equal(body.ok, true);
+    // Should detect semantic overlap with Alice's earlier intent_declared
+    assert.ok(body.collisions.length >= 1, 'Should detect semantic collision');
   });
 });

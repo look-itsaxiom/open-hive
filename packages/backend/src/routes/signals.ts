@@ -32,6 +32,7 @@ export function signalRoutes(app: FastifyInstance, registry: PortRegistry, engin
         content,
         file_path: null,
         semantic_area: null,
+        weight: 1.0,
       });
 
       await store.updateSessionActivity(session_id, { intent: content });
@@ -86,6 +87,7 @@ export function signalRoutes(app: FastifyInstance, registry: PortRegistry, engin
         content: file_path,
         file_path,
         semantic_area: dirname(file_path),
+        weight: 1.0,
       });
 
       const updates: { files_touched?: string[]; areas?: string[] } = {

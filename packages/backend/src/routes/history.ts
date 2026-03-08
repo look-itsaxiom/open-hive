@@ -3,7 +3,7 @@ import type { PortRegistry } from '../port-registry.js';
 import type { HistoryRequest, HistoryResponse } from '@open-hive/shared';
 
 export function historyRoutes(app: FastifyInstance, registry: PortRegistry) {
-  const { store } = registry;
+  const { store, decay } = registry;
 
   app.get<{ Querystring: HistoryRequest }>('/api/history', async (req, reply) => {
     try {
@@ -26,13 +26,16 @@ export function historyRoutes(app: FastifyInstance, registry: PortRegistry) {
         }
       }
 
-      const signals = await store.getRecentSignals({
+      const rawSignals = await store.getRecentSignals({
         repo: req.query.repo,
         file_path: req.query.file_path,
         area: req.query.area,
         since: req.query.since,
         limit: req.query.limit,
       });
+
+      // Apply current decay weights and sort by relevance
+      const signals = decay.applyDecay(rawSignals);
 
       // Collect unique session IDs from returned signals
       const sessionIds = [...new Set(signals.map(s => s.session_id))];

@@ -30,6 +30,7 @@ interface SignalRow {
   content: string;
   file_path: string | null;
   semantic_area: string | null;
+  weight: number;
 }
 
 interface CollisionRow {
@@ -131,10 +132,10 @@ export class HiveStore implements IHiveStore {
   async createSignal(s: Omit<Signal, 'signal_id'>): Promise<Signal> {
     const signal_id = nanoid();
     const stmt = this.db.prepare(
-      `INSERT INTO signals (signal_id, session_id, timestamp, type, content, file_path, semantic_area)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO signals (signal_id, session_id, timestamp, type, content, file_path, semantic_area, weight)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     );
-    stmt.run(signal_id, s.session_id, s.timestamp, s.type, s.content, s.file_path ?? null, s.semantic_area ?? null);
+    stmt.run(signal_id, s.session_id, s.timestamp, s.type, s.content, s.file_path ?? null, s.semantic_area ?? null, s.weight);
     return { ...s, signal_id };
   }
 
@@ -243,6 +244,7 @@ export class HiveStore implements IHiveStore {
     return {
       ...row,
       type: row.type as SignalType,
+      weight: row.weight,
     };
   }
 

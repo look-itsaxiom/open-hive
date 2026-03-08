@@ -39,6 +39,7 @@ function createTestConfig(): HiveBackendConfig {
     },
     alerts: { min_severity: 'info', webhook_urls: [] },
     identity: { provider: 'passthrough' },
+    decay: { enabled: true, default_half_life_seconds: 86400, type_overrides: {}, floor: 0.01 },
     webhooks: { urls: [] },
     session: { heartbeat_interval_seconds: 30, idle_timeout_seconds: 300 },
   };
@@ -68,7 +69,8 @@ function createTestDB(): DatabaseSync {
       type TEXT NOT NULL,
       content TEXT NOT NULL,
       file_path TEXT,
-      semantic_area TEXT
+      semantic_area TEXT,
+      weight REAL NOT NULL DEFAULT 1.0
     );
     CREATE TABLE collisions (
       collision_id TEXT PRIMARY KEY,
