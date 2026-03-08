@@ -2,7 +2,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { nanoid } from 'nanoid';
 import type {
   Session, Signal, Collision, CollisionSeverity, CollisionType,
-  SignalType, SessionStatus,
+  SignalType, SessionStatus, AgentMail, AgentMailType,
   IHiveStore, HistoricalIntent,
 } from '@open-hive/shared';
 
@@ -42,6 +42,19 @@ interface CollisionRow {
   detected_at: string;
   resolved: number;
   resolved_by: string | null;
+}
+
+interface MailRow {
+  mail_id: string;
+  from_session_id: string | null;
+  to_session_id: string | null;
+  to_context_id: string | null;
+  type: string;
+  subject: string;
+  content: string;
+  created_at: string;
+  read_at: string | null;
+  weight: number;
 }
 
 const MAX_TRACKED_ENTRIES = 200;
@@ -229,6 +242,41 @@ export class HiveStore implements IHiveStore {
     stmt.run(resolved_by, collision_id);
   }
 
+  // --- Agent Mail ---
+
+  async createMail(m: Omit<AgentMail, 'mail_id' | 'read_at' | 'weight'>): Promise<AgentMail> {
+    const mail_id = nanoid();
+    const stmt = this.db.prepare(
+      `INSERT INTO agent_mail (mail_id, from_session_id, to_session_id, to_context_id, type, subject, content, created_at, read_at, weight)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 1.0)`
+    );
+    stmt.run(mail_id, m.from_session_id ?? null, m.to_session_id ?? null, m.to_context_id ?? null, m.type, m.subject, m.content, m.created_at);
+    return { ...m, mail_id, read_at: null, weight: 1.0 };
+  }
+
+  async getUnreadMail(session_id: string): Promise<AgentMail[]> {
+    const stmt = this.db.prepare(
+      `SELECT * FROM agent_mail WHERE to_session_id = ? AND read_at IS NULL ORDER BY created_at DESC`
+    );
+    const rows = stmt.all(session_id) as unknown as MailRow[];
+    return rows.map(r => this.rowToMail(r));
+  }
+
+  async getMailByContext(context_id: string): Promise<AgentMail[]> {
+    const stmt = this.db.prepare(
+      `SELECT * FROM agent_mail WHERE to_context_id = ? ORDER BY created_at DESC`
+    );
+    const rows = stmt.all(context_id) as unknown as MailRow[];
+    return rows.map(r => this.rowToMail(r));
+  }
+
+  async markMailRead(mail_id: string): Promise<void> {
+    const stmt = this.db.prepare(
+      `UPDATE agent_mail SET read_at = ? WHERE mail_id = ?`
+    );
+    stmt.run(new Date().toISOString(), mail_id);
+  }
+
   // --- Helpers ---
 
   private rowToSession(row: SessionRow): Session {
@@ -255,6 +303,13 @@ export class HiveStore implements IHiveStore {
       type: row.type as CollisionType,
       severity: row.severity as CollisionSeverity,
       resolved: Boolean(row.resolved),
+    };
+  }
+
+  private rowToMail(row: MailRow): AgentMail {
+    return {
+      ...row,
+      type: row.type as AgentMailType,
     };
   }
 }

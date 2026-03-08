@@ -91,11 +91,26 @@ function createTestDB(): DatabaseSync {
       discovered_at TEXT NOT NULL,
       last_activity TEXT
     );
+    CREATE TABLE IF NOT EXISTS agent_mail (
+      mail_id TEXT PRIMARY KEY,
+      from_session_id TEXT,
+      to_session_id TEXT,
+      to_context_id TEXT,
+      type TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      read_at TEXT,
+      weight REAL NOT NULL DEFAULT 1.0
+    );
     CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
     CREATE INDEX IF NOT EXISTS idx_sessions_repo ON sessions(repo);
     CREATE INDEX IF NOT EXISTS idx_signals_session ON signals(session_id);
     CREATE INDEX IF NOT EXISTS idx_signals_file ON signals(file_path);
     CREATE INDEX IF NOT EXISTS idx_collisions_resolved ON collisions(resolved);
+    CREATE INDEX IF NOT EXISTS idx_mail_to_session ON agent_mail(to_session_id);
+    CREATE INDEX IF NOT EXISTS idx_mail_to_context ON agent_mail(to_context_id);
+    CREATE INDEX IF NOT EXISTS idx_mail_read ON agent_mail(read_at);
   `);
   return db;
 }
