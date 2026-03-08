@@ -32,17 +32,78 @@ Adds L3b embedding-based semantic collision detection to the collision engine. W
 - Creates an `EmbeddingAnalyzer` class that implements the `ISemanticAnalyzer` port interface from `@open-hive/shared`.
 - The analyzer compares developer intents using cosine similarity of vector embeddings.
 - Returns a `SemanticMatch` with `tier: 'L3b'` when similarity exceeds the configured threshold.
-- Includes an embedding cache to avoid redundant API calls.
+- Includes an `EmbeddingCache` that stores computed embeddings to avoid redundant API calls.
 - Registers in the `PortRegistry` as part of the `analyzers` array.
 
 ---
 
-## Step 1: Create the Embedding Analyzer
+## Step 1: Create the Embedding Cache
+
+Create `packages/backend/src/services/embedding-cache.ts`:
+
+```typescript
+import { createHash } from 'node:crypto';
+
+interface CacheEntry {
+  hash: string;
+  embedding: number[];
+  created_at: number;
+}
+
+export class EmbeddingCache {
+  private cache = new Map<string, CacheEntry>();
+  private maxSize: number;
+  private ttlMs: number;
+
+  constructor(opts: { maxSize?: number; ttlMs?: number } = {}) {
+    this.maxSize = opts.maxSize ?? 500;
+    this.ttlMs = opts.ttlMs ?? 3600_000; // 1 hour default
+  }
+
+  private hash(text: string): string {
+    return createHash('sha256').update(text).digest('hex');
+  }
+
+  get(text: string): number[] | null {
+    const key = this.hash(text);
+    const entry = this.cache.get(key);
+    if (!entry) return null;
+    if (Date.now() - entry.created_at > this.ttlMs) {
+      this.cache.delete(key);
+      return null;
+    }
+    return entry.embedding;
+  }
+
+  set(text: string, embedding: number[]): void {
+    if (this.cache.size >= this.maxSize) {
+      // Evict oldest entry
+      const oldest = this.cache.keys().next().value;
+      if (oldest) this.cache.delete(oldest);
+    }
+    const key = this.hash(text);
+    this.cache.set(key, { hash: key, embedding, created_at: Date.now() });
+  }
+
+  get size(): number {
+    return this.cache.size;
+  }
+
+  clear(): void {
+    this.cache.clear();
+  }
+}
+```
+
+---
+
+## Step 2: Create the Embedding Analyzer
 
 Create `packages/backend/src/services/embedding-analyzer.ts`:
 
 ```typescript
 import type { ISemanticAnalyzer, SemanticMatch } from '@open-hive/shared';
+import { EmbeddingCache } from './embedding-cache.js';
 
 export interface EmbeddingAnalyzerConfig {
   provider: string;
@@ -55,29 +116,43 @@ export interface EmbeddingAnalyzerConfig {
 export class EmbeddingAnalyzer implements ISemanticAnalyzer {
   readonly name: string;
   readonly tier = 'L3b' as const;
+  private cache: EmbeddingCache;
 
   constructor(private config: EmbeddingAnalyzerConfig) {
     this.name = `${config.provider}-embeddings`;
+    this.cache = new EmbeddingCache();
   }
 
   async compare(a: string, b: string): Promise<SemanticMatch | null> {
-    const [embA, embB] = await Promise.all([
-      this.embed(a),
-      this.embed(b),
-    ]);
-    const score = cosineSimilarity(embA, embB);
-    if (score < this.config.threshold) return null;
+    try {
+      const [embA, embB] = await Promise.all([
+        this.getOrEmbed(a),
+        this.getOrEmbed(b),
+      ]);
+      const score = cosineSimilarity(embA, embB);
+      if (score < this.config.threshold) return null;
 
-    return {
-      score,
-      tier: 'L3b',
-      explanation: `Embedding similarity: ${(score * 100).toFixed(0)}%`,
-    };
+      return {
+        score,
+        tier: 'L3b',
+        explanation: `Embedding similarity: ${(score * 100).toFixed(0)}%`,
+      };
+    } catch {
+      // Embedding errors are non-fatal — return null to skip this tier
+      return null;
+    }
+  }
+
+  private async getOrEmbed(text: string): Promise<number[]> {
+    const cached = this.cache.get(text);
+    if (cached) return cached;
+
+    const embedding = await this.embed(text);
+    this.cache.set(text, embedding);
+    return embedding;
   }
 
   private async embed(text: string): Promise<number[]> {
-    // Provider-specific embedding logic
-    // Uses native fetch to call OpenAI, Ollama, or other embedding APIs
     if (this.config.provider === 'openai') {
       return this.embedOpenAI(text);
     }
@@ -133,7 +208,7 @@ function cosineSimilarity(a: number[], b: number[]): number {
 
 ---
 
-## Step 2: Register in PortRegistry
+## Step 3: Register in PortRegistry
 
 In `packages/backend/src/server.ts`, add the embedding analyzer to the analyzers array:
 
@@ -153,10 +228,7 @@ const analyzers: ISemanticAnalyzer[] = [
 ];
 
 const registry: PortRegistry = {
-  store,
-  identity,
-  analyzers,
-  alerts,
+  store, identity, analyzers, alerts, decay, nerves,
 };
 ```
 
@@ -164,7 +236,57 @@ The collision engine iterates through `registry.analyzers` in order. L3a runs fi
 
 ---
 
-## Step 3: Add Tests
+## Step 4: Add Tests
+
+Create `packages/backend/src/services/embedding-cache.test.ts`:
+
+```typescript
+import { describe, it, beforeEach } from 'node:test';
+import assert from 'node:assert/strict';
+import { EmbeddingCache } from './embedding-cache.js';
+
+describe('EmbeddingCache', () => {
+  let cache: EmbeddingCache;
+
+  beforeEach(() => {
+    cache = new EmbeddingCache({ maxSize: 3, ttlMs: 1000 });
+  });
+
+  it('returns null for uncached text', () => {
+    assert.equal(cache.get('hello'), null);
+  });
+
+  it('caches and retrieves embeddings', () => {
+    const embedding = [0.1, 0.2, 0.3];
+    cache.set('hello', embedding);
+    assert.deepEqual(cache.get('hello'), embedding);
+  });
+
+  it('evicts oldest entry when maxSize exceeded', () => {
+    cache.set('a', [1]);
+    cache.set('b', [2]);
+    cache.set('c', [3]);
+    cache.set('d', [4]); // evicts 'a'
+    assert.equal(cache.get('a'), null);
+    assert.deepEqual(cache.get('d'), [4]);
+  });
+
+  it('expires entries after TTL', async () => {
+    const shortCache = new EmbeddingCache({ ttlMs: 10 });
+    shortCache.set('x', [1]);
+    await new Promise(r => setTimeout(r, 20));
+    assert.equal(shortCache.get('x'), null);
+  });
+
+  it('tracks size correctly', () => {
+    assert.equal(cache.size, 0);
+    cache.set('a', [1]);
+    assert.equal(cache.size, 1);
+    cache.clear();
+    assert.equal(cache.size, 0);
+  });
+});
+```
 
 Create `packages/backend/src/services/embedding-analyzer.test.ts`:
 
@@ -181,22 +303,40 @@ describe('EmbeddingAnalyzer', () => {
       threshold: 0.75,
     });
     assert.equal(analyzer.tier, 'L3b');
-    assert.equal(analyzer.name, 'openai-embeddings');
   });
 
-  it('has correct name based on provider', () => {
+  it('names itself based on provider', () => {
+    const openai = new EmbeddingAnalyzer({ provider: 'openai', apiKey: 'test', threshold: 0.75 });
+    assert.equal(openai.name, 'openai-embeddings');
+
+    const ollama = new EmbeddingAnalyzer({ provider: 'ollama', threshold: 0.75 });
+    assert.equal(ollama.name, 'ollama-embeddings');
+  });
+
+  it('rejects unsupported providers', async () => {
+    const analyzer = new EmbeddingAnalyzer({ provider: 'unknown', threshold: 0.75 });
+    // compare() catches errors and returns null
+    const result = await analyzer.compare('hello', 'world');
+    assert.equal(result, null);
+  });
+
+  it('returns null when API errors occur (non-fatal)', async () => {
+    // OpenAI with bad key will fail — should return null, not throw
     const analyzer = new EmbeddingAnalyzer({
-      provider: 'ollama',
+      provider: 'openai',
+      apiKey: 'bad-key',
+      baseUrl: 'http://localhost:99999', // unreachable
       threshold: 0.75,
     });
-    assert.equal(analyzer.name, 'ollama-embeddings');
+    const result = await analyzer.compare('intent a', 'intent b');
+    assert.equal(result, null, 'Should gracefully return null on API error');
   });
 });
 ```
 
 ---
 
-## Step 4: Verify
+## Step 5: Verify
 
 ```bash
 npm run build && npm test
@@ -205,7 +345,8 @@ npm run build && npm test
 Confirm:
 - [ ] Build succeeds with no type errors
 - [ ] All existing tests still pass
-- [ ] New embedding analyzer tests pass
+- [ ] New embedding cache tests pass (5 tests)
+- [ ] New embedding analyzer tests pass (4 tests)
 - [ ] With `SEMANTIC_EMBEDDINGS=false` (default), the analyzer is not registered (backward compat)
 - [ ] Manual test: set `SEMANTIC_EMBEDDINGS=true`, `EMBEDDINGS_PROVIDER=ollama`, start Ollama with `nomic-embed-text`, create two sessions with semantically similar intents, verify the collision details include embedding similarity
 

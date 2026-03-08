@@ -55,6 +55,14 @@ export interface LLMAnalyzerConfig {
   rateLimitPerMin: number;
 }
 
+const COMPARISON_PROMPT = `You are a code coordination assistant. Two developers are working in the same repository. Determine if their intents overlap (working on the same concern, touching the same subsystem, or likely to cause merge conflicts).
+
+Developer A intent: "{intentA}"
+Developer B intent: "{intentB}"
+
+Respond with ONLY valid JSON (no markdown, no explanation):
+{"overlap": true/false, "confidence": 0.0-1.0, "explanation": "brief reason"}`;
+
 export class LLMAnalyzer implements ISemanticAnalyzer {
   readonly name = 'llm-comparison';
   readonly tier = 'L3c' as const;
@@ -90,10 +98,81 @@ export class LLMAnalyzer implements ISemanticAnalyzer {
     intentA: string,
     intentB: string,
   ): Promise<{ overlap: boolean; confidence: number; explanation: string }> {
-    // Provider-specific LLM call logic
-    // Returns structured comparison result
-    // See the full implementation in the skill body above
-    throw new Error('Implement provider-specific call');
+    const prompt = COMPARISON_PROMPT
+      .replace('{intentA}', intentA)
+      .replace('{intentB}', intentB);
+
+    const raw = await this.sendToProvider(prompt);
+    return JSON.parse(raw);
+  }
+
+  private async sendToProvider(prompt: string): Promise<string> {
+    switch (this.config.provider) {
+      case 'openai':
+      case 'generic':
+        return this.sendOpenAICompatible(prompt);
+      case 'anthropic':
+        return this.sendAnthropic(prompt);
+      case 'ollama':
+        return this.sendOllama(prompt);
+      default:
+        throw new Error(`Unsupported LLM provider: ${this.config.provider}`);
+    }
+  }
+
+  private async sendOpenAICompatible(prompt: string): Promise<string> {
+    const baseUrl = this.config.baseUrl ?? 'https://api.openai.com/v1';
+    const model = this.config.model ?? 'gpt-4o-mini';
+    const res = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.config.apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0,
+        max_tokens: 200,
+      }),
+    });
+    if (!res.ok) throw new Error(`OpenAI API error: ${res.status}`);
+    const data = await res.json() as { choices: Array<{ message: { content: string } }> };
+    return data.choices[0].message.content;
+  }
+
+  private async sendAnthropic(prompt: string): Promise<string> {
+    const baseUrl = this.config.baseUrl ?? 'https://api.anthropic.com';
+    const model = this.config.model ?? 'claude-haiku-4-5-20251001';
+    const res = await fetch(`${baseUrl}/v1/messages`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.config.apiKey!,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 200,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+    if (!res.ok) throw new Error(`Anthropic API error: ${res.status}`);
+    const data = await res.json() as { content: Array<{ text: string }> };
+    return data.content[0].text;
+  }
+
+  private async sendOllama(prompt: string): Promise<string> {
+    const baseUrl = this.config.baseUrl ?? 'http://localhost:11434';
+    const model = this.config.model ?? 'llama3.2';
+    const res = await fetch(`${baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, prompt, stream: false }),
+    });
+    if (!res.ok) throw new Error(`Ollama API error: ${res.status}`);
+    const data = await res.json() as { response: string };
+    return data.response;
   }
 }
 ```
@@ -127,10 +206,7 @@ const analyzers: ISemanticAnalyzer[] = [
 ];
 
 const registry: PortRegistry = {
-  store,
-  identity,
-  analyzers,
-  alerts,
+  store, identity, analyzers, alerts, decay, nerves,
 };
 ```
 
@@ -170,7 +246,7 @@ import assert from 'node:assert/strict';
 import { LLMAnalyzer } from './llm-analyzer.js';
 
 describe('LLMAnalyzer', () => {
-  it('has tier L3c', () => {
+  it('has tier L3c and correct name', () => {
     const analyzer = new LLMAnalyzer({
       provider: 'ollama',
       confidenceThreshold: 0.7,
@@ -178,6 +254,58 @@ describe('LLMAnalyzer', () => {
     });
     assert.equal(analyzer.tier, 'L3c');
     assert.equal(analyzer.name, 'llm-comparison');
+  });
+
+  it('rate limits after configured max calls', async () => {
+    const analyzer = new LLMAnalyzer({
+      provider: 'openai',
+      apiKey: 'test',
+      baseUrl: 'http://localhost:99999', // unreachable
+      confidenceThreshold: 0.7,
+      rateLimitPerMin: 2,
+    });
+
+    // First 2 calls will fail (unreachable) but consume rate limit
+    await analyzer.compare('a', 'b');
+    await analyzer.compare('c', 'd');
+    // Third call should be rate-limited (returns null without calling API)
+    const result = await analyzer.compare('e', 'f');
+    assert.equal(result, null);
+  });
+
+  it('returns null on API error (non-fatal)', async () => {
+    const analyzer = new LLMAnalyzer({
+      provider: 'openai',
+      apiKey: 'bad-key',
+      baseUrl: 'http://localhost:99999', // unreachable
+      confidenceThreshold: 0.7,
+      rateLimitPerMin: 10,
+    });
+    const result = await analyzer.compare('refactoring auth', 'updating auth module');
+    assert.equal(result, null, 'Should gracefully return null on API error');
+  });
+
+  it('rejects unsupported providers', async () => {
+    const analyzer = new LLMAnalyzer({
+      provider: 'unknown' as any,
+      confidenceThreshold: 0.7,
+      rateLimitPerMin: 10,
+    });
+    const result = await analyzer.compare('a', 'b');
+    assert.equal(result, null, 'Unsupported provider should return null');
+  });
+
+  it('supports all four provider types', () => {
+    // Just verifying construction doesn't throw
+    for (const provider of ['openai', 'anthropic', 'ollama', 'generic'] as const) {
+      const analyzer = new LLMAnalyzer({
+        provider,
+        apiKey: 'test',
+        confidenceThreshold: 0.7,
+        rateLimitPerMin: 10,
+      });
+      assert.equal(analyzer.tier, 'L3c');
+    }
   });
 });
 ```
@@ -193,7 +321,7 @@ npm run build && npm test
 Confirm:
 - [ ] Build succeeds with no type errors
 - [ ] All existing tests still pass
-- [ ] New LLM analyzer tests pass
+- [ ] New LLM analyzer tests pass (5 tests)
 - [ ] With `SEMANTIC_LLM=false` (default), the analyzer is not registered (backward compat)
 - [ ] Manual smoke test: set `SEMANTIC_LLM=true`, `LLM_PROVIDER=ollama`, start Ollama, create two sessions with overlapping intents, verify the collision details include an LLM explanation
 
@@ -215,6 +343,6 @@ LLM_RATE_LIMIT_PER_MIN=10   # Max API calls per minute
 ### Provider examples
 
 **OpenAI**: `LLM_PROVIDER=openai LLM_API_KEY=sk-... LLM_MODEL=gpt-4o-mini`
-**Anthropic**: `LLM_PROVIDER=anthropic LLM_API_KEY=sk-ant-... LLM_MODEL=claude-haiku-4-20250414`
+**Anthropic**: `LLM_PROVIDER=anthropic LLM_API_KEY=sk-ant-... LLM_MODEL=claude-haiku-4-5-20251001`
 **Ollama**: `LLM_PROVIDER=ollama LLM_MODEL=llama3.2`
 **OpenRouter**: `LLM_PROVIDER=generic LLM_API_KEY=sk-or-... LLM_BASE_URL=https://openrouter.ai/api/v1`
