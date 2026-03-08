@@ -15,12 +15,15 @@ import { CollisionEngine } from './services/collision-engine.js';
 import { KeywordAnalyzer } from './services/keyword-analyzer.js';
 import { PassthroughIdentityProvider } from './services/passthrough-identity-provider.js';
 import { AlertDispatcher } from './services/alert-dispatcher.js';
+import { DecayService } from './services/decay-service.js';
 import { createAuthMiddleware } from './middleware/auth.js';
 import type { PortRegistry } from './port-registry.js';
 import { sessionRoutes } from './routes/sessions.js';
 import { signalRoutes } from './routes/signals.js';
 import { conflictRoutes } from './routes/conflicts.js';
 import { historyRoutes } from './routes/history.js';
+import { richSignalRoutes } from './routes/rich-signals.js';
+import { mailRoutes } from './routes/mail.js';
 import type { HiveBackendConfig } from '@open-hive/shared';
 
 function createTestConfig(): HiveBackendConfig {
@@ -37,6 +40,7 @@ function createTestConfig(): HiveBackendConfig {
     },
     alerts: { min_severity: 'info', webhook_urls: [] },
     identity: { provider: 'passthrough' },
+    decay: { enabled: true, default_half_life_seconds: 86400, type_overrides: {}, floor: 0.01 },
     webhooks: { urls: [] },
     session: { heartbeat_interval_seconds: 30, idle_timeout_seconds: 300 },
   };
@@ -67,7 +71,8 @@ function createTestDB(): DatabaseSync {
       type TEXT NOT NULL,
       content TEXT NOT NULL,
       file_path TEXT,
-      semantic_area TEXT
+      semantic_area TEXT,
+      weight REAL NOT NULL DEFAULT 1.0
     );
     CREATE TABLE IF NOT EXISTS collisions (
       collision_id TEXT PRIMARY KEY,
@@ -87,11 +92,26 @@ function createTestDB(): DatabaseSync {
       discovered_at TEXT NOT NULL,
       last_activity TEXT
     );
+    CREATE TABLE IF NOT EXISTS agent_mail (
+      mail_id TEXT PRIMARY KEY,
+      from_session_id TEXT,
+      to_session_id TEXT,
+      to_context_id TEXT,
+      type TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      read_at TEXT,
+      weight REAL NOT NULL DEFAULT 1.0
+    );
     CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
     CREATE INDEX IF NOT EXISTS idx_sessions_repo ON sessions(repo);
     CREATE INDEX IF NOT EXISTS idx_signals_session ON signals(session_id);
     CREATE INDEX IF NOT EXISTS idx_signals_file ON signals(file_path);
     CREATE INDEX IF NOT EXISTS idx_collisions_resolved ON collisions(resolved);
+    CREATE INDEX IF NOT EXISTS idx_mail_to_session ON agent_mail(to_session_id);
+    CREATE INDEX IF NOT EXISTS idx_mail_to_context ON agent_mail(to_context_id);
+    CREATE INDEX IF NOT EXISTS idx_mail_read ON agent_mail(read_at);
   `);
   return db;
 }
@@ -104,8 +124,9 @@ async function buildTestServer(): Promise<FastifyInstance> {
   const engine = new CollisionEngine(store, config, analyzers);
   const identity = new PassthroughIdentityProvider();
   const alerts = new AlertDispatcher();
+  const decay = new DecayService(config.decay);
 
-  const registry: PortRegistry = { store, identity, analyzers, alerts };
+  const registry: PortRegistry = { store, identity, analyzers, alerts, decay };
 
   const app = Fastify({ logger: false });
   await app.register(cors, { origin: true });
@@ -116,6 +137,8 @@ async function buildTestServer(): Promise<FastifyInstance> {
   signalRoutes(app, registry, engine);
   conflictRoutes(app, registry, engine);
   historyRoutes(app, registry);
+  richSignalRoutes(app, registry, engine);
+  mailRoutes(app, registry);
 
   return app;
 }
@@ -437,5 +460,391 @@ describe('Smoke: input validation', () => {
       payload: { session_id: 'does-not-exist' },
     });
     assert.equal(res.statusCode, 404);
+  });
+});
+
+describe('Smoke: signal decay weight', () => {
+  let app: FastifyInstance;
+  before(async () => { app = await buildTestServer(); });
+  after(async () => { await app.close(); });
+
+  it('signals are created with weight close to 1.0', async () => {
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'decay-1', developer_email: 'alice@test.com',
+        developer_name: 'Alice', repo: 'app', project_path: '/code/app',
+      },
+    });
+
+    await app.inject({
+      method: 'POST', url: '/api/signals/activity',
+      payload: { session_id: 'decay-1', file_path: 'src/foo.ts', type: 'file_modify' },
+    });
+
+    const history = await app.inject({ method: 'GET', url: '/api/history?repo=app' });
+    const body = JSON.parse(history.body);
+    assert.ok(body.signals.length >= 1);
+    // Decay is now applied on read, so fresh signals should be very close to 1.0
+    assert.ok(body.signals[0].weight > 0.99, 'Fresh signal weight should be near 1.0');
+    assert.ok(body.signals[0].weight <= 1.0, 'Weight should not exceed 1.0');
+  });
+});
+
+describe('Smoke: history returns signals sorted by decay weight', () => {
+  let app: FastifyInstance;
+  before(async () => { app = await buildTestServer(); });
+  after(async () => { await app.close(); });
+
+  it('fresher signals have higher weight and appear first', async () => {
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'order-1', developer_email: 'alice@test.com',
+        developer_name: 'Alice', repo: 'order-repo', project_path: '/code/app',
+      },
+    });
+
+    // Create two signals
+    await app.inject({
+      method: 'POST', url: '/api/signals/activity',
+      payload: { session_id: 'order-1', file_path: 'src/a.ts', type: 'file_modify' },
+    });
+    await app.inject({
+      method: 'POST', url: '/api/signals/activity',
+      payload: { session_id: 'order-1', file_path: 'src/b.ts', type: 'file_modify' },
+    });
+
+    const history = await app.inject({ method: 'GET', url: '/api/history?repo=order-repo' });
+    const body = JSON.parse(history.body);
+    assert.ok(body.signals.length >= 2);
+    // All signals should have weight property
+    for (const signal of body.signals) {
+      assert.ok(typeof signal.weight === 'number', 'Signal should have weight');
+      assert.ok(signal.weight > 0, 'Weight should be positive');
+      assert.ok(signal.weight <= 1.0, 'Weight should not exceed 1.0');
+    }
+    // Should be sorted by weight descending (or equal for near-simultaneous signals)
+    for (let i = 1; i < body.signals.length; i++) {
+      assert.ok(body.signals[i - 1].weight >= body.signals[i].weight,
+        'Signals should be sorted by weight descending');
+    }
+  });
+});
+
+describe('Smoke: rich signal endpoint', () => {
+  let app: FastifyInstance;
+  before(async () => { app = await buildTestServer(); });
+  after(async () => { await app.close(); });
+
+  it('accepts intent_declared signal type', async () => {
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'rich-1', developer_email: 'alice@test.com',
+        developer_name: 'Alice', repo: 'app', project_path: '/code/app',
+      },
+    });
+
+    const res = await app.inject({
+      method: 'POST', url: '/api/signals/rich',
+      payload: {
+        session_id: 'rich-1',
+        type: 'intent_declared',
+        content: 'Refactoring the authentication middleware for JWT support',
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.ok, true);
+    assert.ok(body.signal);
+    assert.equal(body.signal.type, 'intent_declared');
+    assert.ok(typeof body.signal.weight === 'number');
+  });
+
+  it('accepts blocker_hit with context_id', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/signals/rich',
+      payload: {
+        session_id: 'rich-1',
+        type: 'blocker_hit',
+        content: 'Waiting on database migration to complete before proceeding',
+        context_id: 'auth-refactor-2026',
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.ok, true);
+    assert.equal(body.signal.type, 'blocker_hit');
+  });
+
+  it('accepts outcome_achieved signal', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/signals/rich',
+      payload: {
+        session_id: 'rich-1',
+        type: 'outcome_achieved',
+        content: 'JWT middleware refactor completed and merged to main',
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.ok, true);
+    assert.equal(body.signal.type, 'outcome_achieved');
+  });
+
+  it('rejects unknown signal type', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/signals/rich',
+      payload: {
+        session_id: 'rich-1',
+        type: 'nonexistent_type',
+        content: 'test',
+      },
+    });
+    assert.equal(res.statusCode, 400);
+  });
+
+  it('triggers collision detection for intent_declared', async () => {
+    // Register Bob with overlapping intent
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'rich-2', developer_email: 'bob@test.com',
+        developer_name: 'Bob', repo: 'app', project_path: '/code/app',
+      },
+    });
+
+    // Bob declares overlapping intent via rich signal
+    const res = await app.inject({
+      method: 'POST', url: '/api/signals/rich',
+      payload: {
+        session_id: 'rich-2',
+        type: 'intent_declared',
+        content: 'Refactoring the authentication JWT token handling',
+      },
+    });
+    const body = JSON.parse(res.body);
+    assert.equal(body.ok, true);
+    // Should detect semantic overlap with Alice's earlier intent_declared
+    assert.ok(body.collisions.length >= 1, 'Should detect semantic collision');
+  });
+});
+
+// ─── Agent Mail Smoke Tests ─────────────────────────────────
+
+describe('Smoke: agent mail', () => {
+  let app: FastifyInstance;
+  before(async () => { app = await buildTestServer(); });
+  after(async () => { await app.close(); });
+
+  it('agent sends mail → recipient picks it up → marks read', async () => {
+    // Register Alice and Bob
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'mail-alice', developer_email: 'alice@test.com',
+        developer_name: 'Alice', repo: 'app', project_path: '/code/app',
+      },
+    });
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'mail-bob', developer_email: 'bob@test.com',
+        developer_name: 'Bob', repo: 'app', project_path: '/code/app',
+      },
+    });
+
+    // Alice sends mail to Bob
+    const send = await app.inject({
+      method: 'POST', url: '/api/mail/send',
+      payload: {
+        from_session_id: 'mail-alice',
+        to_session_id: 'mail-bob',
+        type: 'context_share',
+        subject: 'Auth refactor heads up',
+        content: 'I refactored the JWT middleware — your login flow may need updating',
+      },
+    });
+    assert.equal(send.statusCode, 200);
+    const sendBody = JSON.parse(send.body);
+    assert.equal(sendBody.ok, true);
+    assert.ok(sendBody.mail.mail_id);
+    assert.equal(sendBody.mail.type, 'context_share');
+    assert.equal(sendBody.mail.from_session_id, 'mail-alice');
+    assert.equal(sendBody.mail.to_session_id, 'mail-bob');
+
+    // Bob checks mail
+    const check = await app.inject({
+      method: 'GET', url: '/api/mail/check?session_id=mail-bob',
+    });
+    assert.equal(check.statusCode, 200);
+    const checkBody = JSON.parse(check.body);
+    assert.equal(checkBody.mail.length, 1);
+    assert.equal(checkBody.mail[0].subject, 'Auth refactor heads up');
+
+    // Bob marks it read
+    const mark = await app.inject({
+      method: 'POST', url: '/api/mail/read',
+      payload: { mail_id: checkBody.mail[0].mail_id },
+    });
+    assert.equal(mark.statusCode, 200);
+
+    // Check again — no unread mail
+    const check2 = await app.inject({
+      method: 'GET', url: '/api/mail/check?session_id=mail-bob',
+    });
+    const check2Body = JSON.parse(check2.body);
+    assert.equal(check2Body.mail.length, 0);
+  });
+
+  it('consciousness-generated mail (no from_session_id) is delivered', async () => {
+    const send = await app.inject({
+      method: 'POST', url: '/api/mail/send',
+      payload: {
+        to_session_id: 'mail-alice',
+        type: 'collision_alert',
+        subject: 'Potential overlap detected',
+        content: 'Bob is working in the same auth area as you',
+      },
+    });
+    assert.equal(send.statusCode, 200);
+    const sendBody = JSON.parse(send.body);
+    assert.equal(sendBody.mail.from_session_id, null);
+
+    const check = await app.inject({
+      method: 'GET', url: '/api/mail/check?session_id=mail-alice',
+    });
+    const body = JSON.parse(check.body);
+    assert.ok(body.mail.some((m: any) => m.type === 'collision_alert'));
+  });
+
+  it('rejects mail with missing required fields', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/mail/send',
+      payload: { type: 'general' }, // missing subject and content
+    });
+    assert.equal(res.statusCode, 400);
+  });
+
+  it('rejects mail with no recipient', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/mail/send',
+      payload: {
+        type: 'general',
+        subject: 'test',
+        content: 'test',
+        // no to_session_id or to_context_id
+      },
+    });
+    assert.equal(res.statusCode, 400);
+  });
+
+  it('rejects mail with invalid type', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/mail/send',
+      payload: {
+        to_session_id: 'mail-alice',
+        type: 'invalid_type',
+        subject: 'test',
+        content: 'test',
+      },
+    });
+    assert.equal(res.statusCode, 400);
+  });
+});
+
+describe('Smoke: unread mail in session registration', () => {
+  let app: FastifyInstance;
+  before(async () => { app = await buildTestServer(); });
+  after(async () => { await app.close(); });
+
+  it('registration response includes unread mail', async () => {
+    // Register Alice's first session
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'regmail-alice-1', developer_email: 'alice@test.com',
+        developer_name: 'Alice', repo: 'app', project_path: '/code/app',
+      },
+    });
+
+    // Send mail to Alice's upcoming session
+    await app.inject({
+      method: 'POST', url: '/api/mail/send',
+      payload: {
+        to_session_id: 'regmail-alice-2',
+        type: 'context_share',
+        subject: 'Welcome back',
+        content: 'Things happened while you were away',
+      },
+    });
+
+    // Alice registers a new session — should pick up mail
+    const reg = await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'regmail-alice-2', developer_email: 'alice@test.com',
+        developer_name: 'Alice', repo: 'app', project_path: '/code/app',
+      },
+    });
+    assert.equal(reg.statusCode, 200);
+    const body = JSON.parse(reg.body);
+    assert.ok(body.unread_mail, 'Response should have unread_mail field');
+    assert.ok(body.unread_mail.length >= 1, 'Should have at least one unread mail');
+    assert.equal(body.unread_mail[0].subject, 'Welcome back');
+  });
+});
+
+describe('Smoke: auto-generated mail on collision', () => {
+  let app: FastifyInstance;
+  before(async () => { app = await buildTestServer(); });
+  after(async () => { await app.close(); });
+
+  it('collision detection auto-generates mail to both participants', async () => {
+    // Register Alice and Bob
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'automail-alice', developer_email: 'alice@test.com',
+        developer_name: 'Alice', repo: 'automail-repo', project_path: '/code/app',
+      },
+    });
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'automail-bob', developer_email: 'bob@test.com',
+        developer_name: 'Bob', repo: 'automail-repo', project_path: '/code/app',
+      },
+    });
+
+    // Alice modifies a file
+    await app.inject({
+      method: 'POST', url: '/api/signals/activity',
+      payload: { session_id: 'automail-alice', file_path: 'src/shared.ts', type: 'file_modify' },
+    });
+
+    // Bob modifies the same file → collision
+    const bobAct = await app.inject({
+      method: 'POST', url: '/api/signals/activity',
+      payload: { session_id: 'automail-bob', file_path: 'src/shared.ts', type: 'file_modify' },
+    });
+    const bobBody = JSON.parse(bobAct.body);
+    assert.ok(bobBody.collisions.length >= 1, 'Should detect collision');
+
+    // Both should have unread mail about the collision
+    const aliceMail = await app.inject({
+      method: 'GET', url: '/api/mail/check?session_id=automail-alice',
+    });
+    const aliceMailBody = JSON.parse(aliceMail.body);
+    assert.ok(aliceMailBody.mail.some((m: any) => m.type === 'collision_alert'),
+      'Alice should have collision_alert mail');
+
+    const bobMail = await app.inject({
+      method: 'GET', url: '/api/mail/check?session_id=automail-bob',
+    });
+    const bobMailBody = JSON.parse(bobMail.body);
+    assert.ok(bobMailBody.mail.some((m: any) => m.type === 'collision_alert'),
+      'Bob should have collision_alert mail');
   });
 });

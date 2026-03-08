@@ -45,6 +45,16 @@ export interface HiveBackendConfig {
     /** Which identity provider to use. 'passthrough' trusts self-reported identity. */
     provider: 'passthrough' | string;
   };
+  decay: {
+    /** Whether signal decay is enabled. */
+    enabled: boolean;
+    /** Default half-life in seconds for signals without a type-specific override. */
+    default_half_life_seconds: number;
+    /** Per-type half-life overrides in seconds. */
+    type_overrides: Partial<Record<string, number>>;
+    /** Minimum weight before a signal is considered fully decayed (still queryable). */
+    floor: number;
+  };
   webhooks: {
     urls: string[];
   };

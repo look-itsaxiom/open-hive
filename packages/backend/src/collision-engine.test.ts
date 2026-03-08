@@ -20,6 +20,7 @@ function createTestConfig(overrides?: Partial<HiveBackendConfig>): HiveBackendCo
     },
     alerts: { min_severity: 'info', webhook_urls: [] },
     identity: { provider: 'passthrough' },
+    decay: { enabled: true, default_half_life_seconds: 86400, type_overrides: {}, floor: 0.01 },
     webhooks: { urls: [] },
     session: { heartbeat_interval_seconds: 30, idle_timeout_seconds: 300 },
     ...overrides,
@@ -50,7 +51,8 @@ function createTestDB(): DatabaseSync {
       type TEXT NOT NULL,
       content TEXT NOT NULL,
       file_path TEXT,
-      semantic_area TEXT
+      semantic_area TEXT,
+      weight REAL NOT NULL DEFAULT 1.0
     );
     CREATE TABLE collisions (
       collision_id TEXT PRIMARY KEY,
@@ -419,6 +421,7 @@ describe('HiveStore — signals', () => {
       content: 'fix auth bug',
       file_path: null,
       semantic_area: null,
+      weight: 1.0,
     });
 
     const signals = await store.getRecentSignals({});
@@ -430,11 +433,11 @@ describe('HiveStore — signals', () => {
     await seedSession(store, 'sess-2', 'Bob', 'other-repo');
     await store.createSignal({
       session_id: 'sess-1', timestamp: new Date().toISOString(),
-      type: 'prompt', content: 'signal a', file_path: null, semantic_area: null,
+      type: 'prompt', content: 'signal a', file_path: null, semantic_area: null, weight: 1.0,
     });
     await store.createSignal({
       session_id: 'sess-2', timestamp: new Date().toISOString(),
-      type: 'prompt', content: 'signal b', file_path: null, semantic_area: null,
+      type: 'prompt', content: 'signal b', file_path: null, semantic_area: null, weight: 1.0,
     });
 
     const filtered = await store.getRecentSignals({ repo: 'test-repo' });
@@ -446,7 +449,7 @@ describe('HiveStore — signals', () => {
     for (let i = 0; i < 10; i++) {
       await store.createSignal({
         session_id: 'sess-1', timestamp: new Date().toISOString(),
-        type: 'prompt', content: `signal ${i}`, file_path: null, semantic_area: null,
+        type: 'prompt', content: `signal ${i}`, file_path: null, semantic_area: null, weight: 1.0,
       });
     }
 
