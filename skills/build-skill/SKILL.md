@@ -4,23 +4,25 @@ You are building a new Open Hive integration skill. This meta-skill teaches you 
 
 ## Overview
 
-Open Hive skills are self-contained SKILL.md files that teach Claude how to add an integration to a user's Open Hive installation. Each skill targets one of four **port interfaces** defined in `@open-hive/shared`. The skill file contains all the code, tests, configuration, and instructions needed to wire the integration end-to-end.
+Open Hive skills are self-contained SKILL.md files that teach Claude how to add an integration to a user's Open Hive installation. Each skill targets one of five **port interfaces** defined in `@open-hive/shared`. The skill file contains all the code, tests, configuration, and instructions needed to wire the integration end-to-end.
 
 Your job is to:
 1. Identify which port the user's desired integration targets
 2. Write a complete SKILL.md with all code inline as fenced blocks
 3. Ensure tests exist and the build passes
 
-## Architecture: The Four Ports
+## Architecture: The Five Ports
 
 Open Hive uses a hexagonal (ports & adapters) architecture. All extension points are defined as TypeScript interfaces in `packages/shared/src/ports.ts`. At startup, the backend creates a `PortRegistry` that wires all adapters together.
 
 ```
 PortRegistry {
-  store:      IHiveStore          — where data lives
+  store:      IHiveStore          — where data lives (sessions, signals, collisions, mail)
   identity:   IIdentityProvider   — who is making requests
   analyzers:  ISemanticAnalyzer[] — how intents are compared
   alerts:     AlertDispatcher     — where alerts go (holds IAlertSink[])
+  decay:      DecayService        — signal/mail weight decay over time (core service, not a port)
+  nerves:     INerveRegistry      — connected nerve registration and discovery
 }
 ```
 
@@ -31,7 +33,8 @@ Is your skill about...
   ...where to send collision alerts?        --> implement IAlertSink
   ...how to authenticate developers?        --> implement IIdentityProvider
   ...how to compare developer intents?      --> implement ISemanticAnalyzer
-  ...where to store data?                   --> implement IHiveStore
+  ...where to store data?                   --> implement IHiveStore + INerveRegistry
+  ...managing nerve connections?             --> implement INerveRegistry
   ...something else (UI, tooling, etc.)?    --> consume PortRegistry (no port to implement)
 ```
 
@@ -137,10 +140,7 @@ const identity = authEnabled
   : new PassthroughIdentityProvider();
 
 const registry: PortRegistry = {
-  store,
-  identity,
-  analyzers,
-  alerts,
+  store, identity, analyzers, alerts, decay, nerves,
 };
 ```
 
@@ -215,10 +215,7 @@ const analyzers: ISemanticAnalyzer[] = [
 ];
 
 const registry: PortRegistry = {
-  store,
-  identity,
-  analyzers,
-  alerts,
+  store, identity, analyzers, alerts, decay, nerves,
 };
 ```
 
@@ -254,36 +251,95 @@ export class MyAnalyzer implements ISemanticAnalyzer {
 
 ### 4. IHiveStore (Storage skills)
 
-Replace the default SQLite store with a different database backend.
+Replace the default SQLite store with a different database backend. Storage skills must implement both `IHiveStore` (16 methods) and `INerveRegistry` (5 methods), since the store manages all persistence.
 
 **Import:**
 ```typescript
-import type { IHiveStore } from '@open-hive/shared';
+import type { IHiveStore, INerveRegistry } from '@open-hive/shared';
 ```
 
-**Interface:**
+**Interface (IHiveStore — 16 methods):**
 ```typescript
 export interface IHiveStore {
+  // Sessions (6)
   createSession(...): Promise<Session>;
   getSession(session_id: string): Promise<Session | null>;
   getActiveSessions(repo?: string): Promise<Session[]>;
   updateSessionActivity(...): Promise<void>;
   endSession(session_id: string): Promise<void>;
   cleanupStaleSessions(idle_timeout_seconds: number): Promise<string[]>;
+  // Signals (3)
   createSignal(...): Promise<Signal>;
   getRecentSignals(...): Promise<Signal[]>;
   getRecentIntents(...): Promise<HistoricalIntent[]>;
+  // Collisions (3)
   createCollision(...): Promise<Collision>;
   getActiveCollisions(session_id?: string): Promise<Collision[]>;
   resolveCollision(collision_id: string, resolved_by: string): Promise<void>;
+  // Agent Mail (4)
+  createMail(m: Omit<AgentMail, 'mail_id' | 'read_at' | 'weight'>): Promise<AgentMail>;
+  getUnreadMail(sessionIdOrOpts: string | { session_id?: string; developer_email?: string }): Promise<AgentMail[]>;
+  getMailByContext(context_id: string): Promise<AgentMail[]>;
+  markMailRead(mail_id: string): Promise<void>;
+}
+```
+
+**Interface (INerveRegistry — 5 methods):**
+```typescript
+export interface INerveRegistry {
+  readonly name: string;
+  registerNerve(card: AgentCard, nerve_type: string): Promise<Nerve>;
+  getNerve(agent_id: string): Promise<Nerve | null>;
+  getActiveNerves(nerve_type?: string): Promise<Nerve[]>;
+  updateLastSeen(agent_id: string): Promise<void>;
+  deregisterNerve(agent_id: string): Promise<void>;
+}
+```
+
+**Key models (from `@open-hive/shared`):**
+```typescript
+// Agent Mail — persistent inter-agent messages surviving session boundaries
+interface AgentMail {
+  mail_id: string;
+  from_session_id: string | null;
+  to_session_id: string | null;
+  to_context_id: string | null;    // addressed to a workstream
+  type: AgentMailType;
+  subject: string;
+  content: string;
+  created_at: string;
+  read_at: string | null;
+  weight: number;                  // decays like signals
+}
+
+// Nerve — a registered agent connection
+interface Nerve {
+  nerve_id: string;
+  agent_card: AgentCard;
+  nerve_type: string;              // e.g., 'claude-code', 'jira', 'teams'
+  created_at: string;
+}
+
+// Agent Card — nerve self-description
+interface AgentCard {
+  agent_id: string;
+  name: string;
+  description: string;
+  version: string;
+  human_client: { email: string; display_name: string; org?: string; teams?: string[] };
+  capabilities: { sensory: SignalType[]; motor: DirectiveType[] };
+  endpoint_url?: string;
+  registered_at: string;
+  last_seen: string;
+  status: 'active' | 'idle' | 'disconnected';
 }
 ```
 
 **Registration:**
 ```typescript
-import type { IHiveStore } from '@open-hive/shared';
+import type { IHiveStore, INerveRegistry } from '@open-hive/shared';
 
-const store: IHiveStore = config.database.type === 'my-db'
+const store: IHiveStore & INerveRegistry = config.database.type === 'my-db'
   ? new MyStore(config.database.url)
   : createSQLiteStore(config.database.url);
 
@@ -292,12 +348,38 @@ const registry: PortRegistry = {
   identity,
   analyzers,
   alerts,
+  decay,
+  nerves: store,  // same object implements both
 };
 ```
 
-**Complexity:** High -- 12 methods to implement, must pass all existing tests
+**Important notes:**
+- The `agent_mail` table has a `to_developer_email` column for cross-session mail delivery. When creating mail addressed to a session, resolve the developer's email and store it too.
+- The `getUnreadMail` method accepts either a session_id string OR an options object with `session_id` and/or `developer_email` for OR-based lookup. This is how mail survives session ID changes.
+- The `nerves` table stores `agent_card` as JSON. Use `JSONB` in PostgreSQL, `TEXT` with `JSON.stringify` in SQLite.
 
-**Important:** Import `IHiveStore` from `@open-hive/shared`, not from `../db/store.js`. The shared package is the canonical source for all port interfaces.
+**Complexity:** High -- 21 methods to implement, 6 tables, must pass all existing tests
+
+**Important:** Import `IHiveStore` and `INerveRegistry` from `@open-hive/shared`, not from `../db/store.js`. The shared package is the canonical source for all port interfaces.
+
+---
+
+### 5. INerveRegistry (Nerve management skills)
+
+Manage connected nerve registrations. This port is typically implemented alongside `IHiveStore` (same class handles both), but can be implemented independently for custom nerve discovery mechanisms.
+
+**Import:**
+```typescript
+import type { INerveRegistry, AgentCard, Nerve } from '@open-hive/shared';
+```
+
+**API Endpoints** (already wired in `packages/backend/src/routes/nerves.ts`):
+- `POST /api/nerves/register` — register a nerve with its agent card
+- `GET /api/nerves/active?type=<nerve_type>` — list active nerves
+- `POST /api/nerves/heartbeat` — update last_seen timestamp
+- `POST /api/nerves/deregister` — deregister a nerve
+
+**Complexity:** Low if extending an existing `IHiveStore` implementation, Medium if standalone
 
 ---
 
@@ -309,8 +391,8 @@ Every skill SKILL.md must follow this structure:
 ---
 name: add-<integration-name>
 description: <One-line description>
-category: notification | auth | store | collision-tier
-port: IAlertSink | IIdentityProvider | ISemanticAnalyzer | IHiveStore
+category: notification | auth | store | collision-tier | nerve
+port: IAlertSink | IIdentityProvider | ISemanticAnalyzer | IHiveStore | INerveRegistry
 requires:
   - <npm packages to install>
 modifies:
@@ -397,13 +479,17 @@ npm run build && npm test
 
 10. **TypeScript strict mode**. No `any`, no `@ts-ignore`.
 
+11. **Idempotent operations**. Skills that implement `INerveRegistry.registerNerve()` should upsert (update if agent_id exists) to handle crash recovery — a nerve that crashes and restarts will re-register with the same agent_id.
+
+12. **Mail addressing includes developer_email**. When implementing `createMail()` for `IHiveStore`, always resolve `to_developer_email` from `to_session_id`. This ensures mail survives session ID changes (crashes, restarts).
+
 ## Process
 
 ### Step 1: Understand the integration
 Ask what integration the user wants. Clarify the external service, trigger, and credentials.
 
 ### Step 2: Identify the port
-Map to one of the four ports using the decision tree above.
+Map to one of the five ports using the decision tree above.
 
 ### Step 3: Design the integration
 Plan files: new adapter, modified server.ts, tests, env vars.
