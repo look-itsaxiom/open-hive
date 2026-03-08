@@ -60,6 +60,7 @@ const registry: PortRegistry = {
   analyzers,
   alerts: alertDispatcher,
   decay,
+  nerves: store,
 };
 
 const app = Fastify({ logger: true });
@@ -67,7 +68,14 @@ const app = Fastify({ logger: true });
 await app.register(cors, { origin: true });
 app.addHook('preHandler', createAuthMiddleware(identity));
 
-app.get('/api/health', async () => ({ status: 'ok', version: '0.2.0' }));
+app.get('/api/health', async () => {
+  const nerves = await registry.nerves.getActiveNerves();
+  return {
+    status: 'ok',
+    version: '0.3.0',
+    active_nerves: nerves.length,
+  };
+});
 
 sessionRoutes(app, registry, engine);
 signalRoutes(app, registry, engine);

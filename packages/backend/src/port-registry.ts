@@ -1,5 +1,5 @@
 import type {
-  IHiveStore, IIdentityProvider, ISemanticAnalyzer,
+  IHiveStore, IIdentityProvider, ISemanticAnalyzer, INerveRegistry,
   AlertEvent, AlertParticipant, Collision,
 } from '@open-hive/shared';
 import type { AlertDispatcher } from './services/alert-dispatcher.js';
@@ -15,6 +15,7 @@ export interface PortRegistry {
   analyzers: ISemanticAnalyzer[];
   alerts: AlertDispatcher;
   decay: DecayService;
+  nerves: INerveRegistry;
 }
 
 /**

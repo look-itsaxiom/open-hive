@@ -1,11 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import type { PortRegistry } from '../port-registry.js';
-import type { AgentCard, INerveRegistry } from '@open-hive/shared';
+import type { AgentCard } from '@open-hive/shared';
 
 export function nerveRoutes(app: FastifyInstance, registry: PortRegistry) {
-  // HiveStore implements both IHiveStore and INerveRegistry;
-  // PortRegistry will be updated to expose INerveRegistry in Task 3.4.
-  const store = registry.store as unknown as INerveRegistry;
+  const { nerves } = registry;
 
   // Register a nerve
   app.post<{ Body: { nerve_type: string; agent_card: AgentCard } }>('/api/nerves/register', async (req, reply) => {
@@ -26,7 +24,7 @@ export function nerveRoutes(app: FastifyInstance, registry: PortRegistry) {
         });
       }
 
-      const nerve = await store.registerNerve(agent_card, nerve_type);
+      const nerve = await nerves.registerNerve(agent_card, nerve_type);
       return { ok: true, nerve };
     } catch (err) {
       req.log.error(err, 'Failed to register nerve');
@@ -37,8 +35,8 @@ export function nerveRoutes(app: FastifyInstance, registry: PortRegistry) {
   // List active nerves
   app.get<{ Querystring: { type?: string } }>('/api/nerves/active', async (req, reply) => {
     try {
-      const nerves = await store.getActiveNerves(req.query.type);
-      return { ok: true, nerves };
+      const activeNerves = await nerves.getActiveNerves(req.query.type);
+      return { ok: true, nerves: activeNerves };
     } catch (err) {
       req.log.error(err, 'Failed to list active nerves');
       return reply.status(500).send({ ok: false, error: 'Internal server error' });
@@ -57,7 +55,7 @@ export function nerveRoutes(app: FastifyInstance, registry: PortRegistry) {
         });
       }
 
-      const nerve = await store.getNerve(agent_id);
+      const nerve = await nerves.getNerve(agent_id);
       if (!nerve) {
         return reply.status(404).send({
           ok: false,
@@ -65,7 +63,7 @@ export function nerveRoutes(app: FastifyInstance, registry: PortRegistry) {
         });
       }
 
-      await store.updateLastSeen(agent_id);
+      await nerves.updateLastSeen(agent_id);
       return { ok: true };
     } catch (err) {
       req.log.error(err, 'Failed to process nerve heartbeat');
@@ -85,7 +83,7 @@ export function nerveRoutes(app: FastifyInstance, registry: PortRegistry) {
         });
       }
 
-      await store.deregisterNerve(agent_id);
+      await nerves.deregisterNerve(agent_id);
       return { ok: true };
     } catch (err) {
       req.log.error(err, 'Failed to deregister nerve');

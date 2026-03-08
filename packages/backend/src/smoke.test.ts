@@ -139,12 +139,19 @@ async function buildTestServer(): Promise<FastifyInstance> {
   const alerts = new AlertDispatcher();
   const decay = new DecayService(config.decay);
 
-  const registry: PortRegistry = { store, identity, analyzers, alerts, decay };
+  const registry: PortRegistry = { store, identity, analyzers, alerts, decay, nerves: store };
 
   const app = Fastify({ logger: false });
   await app.register(cors, { origin: true });
   app.addHook('preHandler', createAuthMiddleware(identity));
-  app.get('/api/health', async () => ({ status: 'ok', version: '0.2.0' }));
+  app.get('/api/health', async () => {
+    const activeNerves = await registry.nerves.getActiveNerves();
+    return {
+      status: 'ok',
+      version: '0.3.0',
+      active_nerves: activeNerves.length,
+    };
+  });
 
   sessionRoutes(app, registry, engine);
   signalRoutes(app, registry, engine);
@@ -170,7 +177,7 @@ describe('Smoke: server boots and health check', () => {
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.body);
     assert.equal(body.status, 'ok');
-    assert.equal(body.version, '0.2.0');
+    assert.equal(body.version, '0.3.0');
   });
 });
 
@@ -905,6 +912,49 @@ describe('Smoke: unread mail in session registration', () => {
     assert.ok(body.unread_mail, 'Response should have unread_mail field');
     assert.ok(body.unread_mail.length >= 1, 'Should have at least one unread mail');
     assert.equal(body.unread_mail[0].subject, 'Welcome back');
+  });
+});
+
+describe('Smoke: session-nerve bridge', () => {
+  let app: FastifyInstance;
+  before(async () => { app = await buildTestServer(); });
+  after(async () => { await app.close(); });
+
+  it('session registration auto-registers a Claude Code nerve', async () => {
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'bridge-1', developer_email: 'alice@test.com',
+        developer_name: 'Alice', repo: 'app', project_path: '/code/app',
+      },
+    });
+
+    // Should have auto-registered a nerve
+    const nerves = await app.inject({
+      method: 'GET', url: '/api/nerves/active?type=claude-code',
+    });
+    const body = JSON.parse(nerves.body);
+    assert.ok(body.nerves.some((n: any) => n.agent_card.agent_id === 'cc-bridge-1'),
+      'Should auto-register a claude-code nerve');
+  });
+
+  it('second session registration updates last_seen instead of re-registering', async () => {
+    // Register another session with same ID pattern
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'bridge-1', developer_email: 'alice@test.com',
+        developer_name: 'Alice', repo: 'app', project_path: '/code/app',
+      },
+    });
+
+    // Should still have exactly one nerve for this agent_id
+    const nerves = await app.inject({
+      method: 'GET', url: '/api/nerves/active?type=claude-code',
+    });
+    const body = JSON.parse(nerves.body);
+    const matching = body.nerves.filter((n: any) => n.agent_card.agent_id === 'cc-bridge-1');
+    assert.equal(matching.length, 1, 'Should not duplicate nerve on re-registration');
   });
 });
 
