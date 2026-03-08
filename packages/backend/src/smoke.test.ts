@@ -104,6 +104,15 @@ function createTestDB(): DatabaseSync {
       read_at TEXT,
       weight REAL NOT NULL DEFAULT 1.0
     );
+    CREATE TABLE IF NOT EXISTS nerves (
+      nerve_id TEXT PRIMARY KEY,
+      agent_id TEXT UNIQUE NOT NULL,
+      nerve_type TEXT NOT NULL,
+      agent_card TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      last_seen TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active'
+    );
     CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
     CREATE INDEX IF NOT EXISTS idx_sessions_repo ON sessions(repo);
     CREATE INDEX IF NOT EXISTS idx_signals_session ON signals(session_id);
@@ -112,6 +121,9 @@ function createTestDB(): DatabaseSync {
     CREATE INDEX IF NOT EXISTS idx_mail_to_session ON agent_mail(to_session_id);
     CREATE INDEX IF NOT EXISTS idx_mail_to_context ON agent_mail(to_context_id);
     CREATE INDEX IF NOT EXISTS idx_mail_read ON agent_mail(read_at);
+    CREATE INDEX IF NOT EXISTS idx_nerves_type ON nerves(nerve_type);
+    CREATE INDEX IF NOT EXISTS idx_nerves_status ON nerves(status);
+    CREATE INDEX IF NOT EXISTS idx_nerves_agent_id ON nerves(agent_id);
   `);
   return db;
 }

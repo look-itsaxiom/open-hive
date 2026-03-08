@@ -3,10 +3,11 @@ import { nanoid } from 'nanoid';
 import type {
   Session, Signal, Collision, CollisionSeverity, CollisionType,
   SignalType, SessionStatus, AgentMail, AgentMailType,
+  AgentCard, Nerve, INerveRegistry,
   IHiveStore, HistoricalIntent,
 } from '@open-hive/shared';
 
-export type { IHiveStore, HistoricalIntent } from '@open-hive/shared';
+export type { IHiveStore, HistoricalIntent, INerveRegistry } from '@open-hive/shared';
 
 interface SessionRow {
   session_id: string;
@@ -57,9 +58,20 @@ interface MailRow {
   weight: number;
 }
 
+interface NerveRow {
+  nerve_id: string;
+  agent_id: string;
+  nerve_type: string;
+  agent_card: string;  // JSON blob
+  created_at: string;
+  last_seen: string;
+  status: string;
+}
+
 const MAX_TRACKED_ENTRIES = 200;
 
-export class HiveStore implements IHiveStore {
+export class HiveStore implements IHiveStore, INerveRegistry {
+  readonly name = 'sqlite';
   constructor(private db: DatabaseSync) {}
 
   // --- Sessions ---
@@ -277,6 +289,58 @@ export class HiveStore implements IHiveStore {
     stmt.run(new Date().toISOString(), mail_id);
   }
 
+  // --- Nerves ---
+
+  async registerNerve(card: AgentCard, nerve_type: string): Promise<Nerve> {
+    const nerve_id = nanoid();
+    const now = new Date().toISOString();
+    const cardWithTimestamps: AgentCard = {
+      ...card,
+      registered_at: now,
+      last_seen: now,
+      status: 'active',
+    };
+    const stmt = this.db.prepare(
+      `INSERT OR REPLACE INTO nerves (nerve_id, agent_id, nerve_type, agent_card, created_at, last_seen, status)
+       VALUES (?, ?, ?, ?, ?, ?, 'active')`
+    );
+    stmt.run(nerve_id, card.agent_id, nerve_type, JSON.stringify(cardWithTimestamps), now, now);
+    return { nerve_id, agent_card: cardWithTimestamps, nerve_type, created_at: now };
+  }
+
+  async getNerve(agent_id: string): Promise<Nerve | null> {
+    const stmt = this.db.prepare('SELECT * FROM nerves WHERE agent_id = ?');
+    const row = stmt.get(agent_id) as unknown as NerveRow | undefined;
+    return row ? this.rowToNerve(row) : null;
+  }
+
+  async getActiveNerves(nerve_type?: string): Promise<Nerve[]> {
+    let rows: NerveRow[];
+    if (nerve_type) {
+      const stmt = this.db.prepare('SELECT * FROM nerves WHERE status = ? AND nerve_type = ?');
+      rows = stmt.all('active', nerve_type) as unknown as NerveRow[];
+    } else {
+      const stmt = this.db.prepare('SELECT * FROM nerves WHERE status = ?');
+      rows = stmt.all('active') as unknown as NerveRow[];
+    }
+    return rows.map(r => this.rowToNerve(r));
+  }
+
+  async updateLastSeen(agent_id: string): Promise<void> {
+    const now = new Date().toISOString();
+    const stmt = this.db.prepare(
+      `UPDATE nerves SET last_seen = ?, status = 'active' WHERE agent_id = ?`
+    );
+    stmt.run(now, agent_id);
+  }
+
+  async deregisterNerve(agent_id: string): Promise<void> {
+    const stmt = this.db.prepare(
+      `UPDATE nerves SET status = 'disconnected' WHERE agent_id = ?`
+    );
+    stmt.run(agent_id);
+  }
+
   // --- Helpers ---
 
   private rowToSession(row: SessionRow): Session {
@@ -310,6 +374,15 @@ export class HiveStore implements IHiveStore {
     return {
       ...row,
       type: row.type as AgentMailType,
+    };
+  }
+
+  private rowToNerve(row: NerveRow): Nerve {
+    return {
+      nerve_id: row.nerve_id,
+      agent_card: JSON.parse(row.agent_card) as AgentCard,
+      nerve_type: row.nerve_type,
+      created_at: row.created_at,
     };
   }
 }
