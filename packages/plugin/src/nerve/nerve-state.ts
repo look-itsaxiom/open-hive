@@ -227,4 +227,22 @@ export class NerveState {
   }): void {
     this.state.carry_forward.pending_mail_context.push(mail);
   }
+
+  getCheckInContext(): NerveCheckInContext {
+    return {
+      last_session: this.state.last_session ? {
+        repo: this.state.last_session.repo,
+        intent: this.state.last_session.intent,
+        ended_at: this.state.last_session.ended_at,
+        outcome: this.state.last_session.outcome,
+      } : null,
+      active_blockers: this.state.carry_forward.blockers.map(b => b.text),
+      unresolved_collisions: this.state.carry_forward.unresolved_collisions.map(c => c.collision_id),
+      frequent_areas: this.state.profile.areas
+        .sort((a, b) => b.session_count - a.session_count)
+        .slice(0, 10)
+        .map(a => a.path),
+      repos_active_in: this.state.profile.repos.map(r => r.name),
+    };
+  }
 }

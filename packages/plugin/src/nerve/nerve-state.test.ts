@@ -177,3 +177,45 @@ describe('NerveState — mutations', () => {
     assert.ok(ns.state.profile.repos.length <= 50);
   });
 });
+
+describe('NerveState — getCheckInContext', () => {
+  let tempDir: string;
+  before(() => { tempDir = mkdtempSync(join(tmpdir(), 'nerve-ctx-')); });
+  after(() => { rmSync(tempDir, { recursive: true, force: true }); });
+
+  it('composes enriched context from nerve state', () => {
+    const ns = new NerveState(join(tempDir, 'ctx.json'));
+    ns.load();
+
+    ns.state.last_session = {
+      id: 'prev-1', repo: 'platform', ended_at: '2026-03-07T22:00:00Z',
+      intent: 'OAuth2 PKCE flow', files_touched: ['src/auth/token.ts'],
+      areas: ['src/auth'], outcome: null,
+    };
+    ns.state.carry_forward.blockers.push({ text: 'Waiting on PRD', since: '2026-03-07T20:00:00Z' });
+    ns.state.carry_forward.unresolved_collisions.push({
+      collision_id: 'c1', with_developer: 'Bob', area: 'src/auth', detected_at: '2026-03-07T21:00:00Z',
+    });
+    ns.state.profile.areas.push({ path: 'src/auth', session_count: 12, last_active: '2026-03-07T22:00:00Z' });
+    ns.state.profile.repos.push({ name: 'platform', session_count: 8, last_active: '2026-03-07T22:00:00Z' });
+
+    const ctx = ns.getCheckInContext();
+    assert.ok(ctx.last_session);
+    assert.equal(ctx.last_session.intent, 'OAuth2 PKCE flow');
+    assert.deepEqual(ctx.active_blockers, ['Waiting on PRD']);
+    assert.deepEqual(ctx.unresolved_collisions, ['c1']);
+    assert.ok(ctx.frequent_areas.includes('src/auth'));
+    assert.ok(ctx.repos_active_in.includes('platform'));
+  });
+
+  it('returns empty context when state is fresh', () => {
+    const ns = new NerveState(join(tempDir, 'fresh.json'));
+    ns.load();
+    const ctx = ns.getCheckInContext();
+    assert.equal(ctx.last_session, null);
+    assert.deepEqual(ctx.active_blockers, []);
+    assert.deepEqual(ctx.unresolved_collisions, []);
+    assert.deepEqual(ctx.frequent_areas, []);
+    assert.deepEqual(ctx.repos_active_in, []);
+  });
+});
