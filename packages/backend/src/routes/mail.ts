@@ -8,7 +8,7 @@ const VALID_MAIL_TYPES: Set<string> = new Set([
 ]);
 
 export function mailRoutes(app: FastifyInstance, registry: PortRegistry) {
-  const { store } = registry;
+  const { store, decay } = registry;
 
   // Send agent mail
   app.post<{ Body: SendMailRequest }>('/api/mail/send', async (req, reply) => {
@@ -65,7 +65,12 @@ export function mailRoutes(app: FastifyInstance, registry: PortRegistry) {
         });
       }
 
-      const mail = await store.getUnreadMail(session_id);
+      const rawMail = await store.getUnreadMail(session_id);
+      // Apply decay weights — mail has created_at (not timestamp) so we map
+      const mail = rawMail.map(m => ({
+        ...m,
+        weight: decay.calculateWeight(m.created_at, m.type),
+      })).sort((a, b) => b.weight - a.weight);
       return { ok: true, mail } satisfies CheckMailResponse;
     } catch (err) {
       req.log.error(err, 'Failed to check agent mail');

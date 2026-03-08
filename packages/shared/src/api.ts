@@ -23,6 +23,7 @@ export interface RegisterSessionResponse {
   active_collisions: Collision[];
   active_sessions_in_repo: Pick<Session, 'session_id' | 'developer_name' | 'intent' | 'areas'>[];
   recent_historical_intents: RecentHistoricalIntent[];
+  unread_mail: AgentMail[];
 }
 
 export interface HeartbeatRequest {

@@ -754,6 +754,48 @@ describe('Smoke: agent mail', () => {
   });
 });
 
+describe('Smoke: unread mail in session registration', () => {
+  let app: FastifyInstance;
+  before(async () => { app = await buildTestServer(); });
+  after(async () => { await app.close(); });
+
+  it('registration response includes unread mail', async () => {
+    // Register Alice's first session
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'regmail-alice-1', developer_email: 'alice@test.com',
+        developer_name: 'Alice', repo: 'app', project_path: '/code/app',
+      },
+    });
+
+    // Send mail to Alice's upcoming session
+    await app.inject({
+      method: 'POST', url: '/api/mail/send',
+      payload: {
+        to_session_id: 'regmail-alice-2',
+        type: 'context_share',
+        subject: 'Welcome back',
+        content: 'Things happened while you were away',
+      },
+    });
+
+    // Alice registers a new session — should pick up mail
+    const reg = await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'regmail-alice-2', developer_email: 'alice@test.com',
+        developer_name: 'Alice', repo: 'app', project_path: '/code/app',
+      },
+    });
+    assert.equal(reg.statusCode, 200);
+    const body = JSON.parse(reg.body);
+    assert.ok(body.unread_mail, 'Response should have unread_mail field');
+    assert.ok(body.unread_mail.length >= 1, 'Should have at least one unread mail');
+    assert.equal(body.unread_mail[0].subject, 'Welcome back');
+  });
+});
+
 describe('Smoke: auto-generated mail on collision', () => {
   let app: FastifyInstance;
   before(async () => { app = await buildTestServer(); });

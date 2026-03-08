@@ -60,11 +60,14 @@ export function sessionRoutes(app: FastifyInstance, registry: PortRegistry, _eng
           timestamp: hi.timestamp,
         }));
 
+      const unreadMail = await store.getUnreadMail(session_id);
+
       return {
         ok: true,
         active_collisions,
         active_sessions_in_repo,
         recent_historical_intents,
+        unread_mail: unreadMail,
       } satisfies RegisterSessionResponse;
     } catch (err) {
       req.log.error(err, 'Failed to register session');
