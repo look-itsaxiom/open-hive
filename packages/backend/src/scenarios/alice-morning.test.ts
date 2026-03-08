@@ -35,7 +35,7 @@ import type { HiveBackendConfig } from '@open-hive/shared';
 
 // ─── Test Infrastructure ─────────────────────────────────────
 
-function buildScenarioServer(): Promise<FastifyInstance> {
+async function buildScenarioServer(): Promise<FastifyInstance> {
   const config: HiveBackendConfig = {
     port: 0,
     database: { type: 'sqlite', url: ':memory:' },
@@ -160,7 +160,8 @@ function buildScenarioServer(): Promise<FastifyInstance> {
   mailRoutes(app, registry);
   nerveRoutes(app, registry);
 
-  return app.ready().then(() => app);
+  await app.ready();
+  return app;
 }
 
 /** Helper — inject and assert 200, return parsed body */

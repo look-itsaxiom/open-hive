@@ -31,7 +31,7 @@ export interface ScenarioServer {
   config: HiveBackendConfig;
 }
 
-export function buildScenarioServer(overrides?: Partial<HiveBackendConfig>): Promise<ScenarioServer> {
+export async function buildScenarioServer(overrides?: Partial<HiveBackendConfig>): Promise<ScenarioServer> {
   const config: HiveBackendConfig = {
     port: 0,
     database: { type: 'sqlite', url: ':memory:' },
@@ -157,7 +157,8 @@ export function buildScenarioServer(overrides?: Partial<HiveBackendConfig>): Pro
   mailRoutes(app, registry);
   nerveRoutes(app, registry);
 
-  return app.ready().then(() => ({ app, store, config }));
+  await app.ready();
+  return { app, store, config };
 }
 
 /** Inject a request and assert 200, return parsed body */

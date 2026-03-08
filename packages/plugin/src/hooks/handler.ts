@@ -68,7 +68,10 @@ async function handleSessionStart(input: HookInput): Promise<Record<string, unkn
     developer_name: config.identity.display_name,
     repo,
     project_path: input.cwd ?? process.cwd(),
-    nerve_context: nerve.getCheckInContext(),
+    nerve_context: {
+      ...nerve.getCheckInContext(),
+      last_session: nerve.getCheckInContext().last_session ?? undefined,
+    },
   });
 
   if (!result) return {};
