@@ -6,6 +6,7 @@ Get Open Hive running in under five minutes.
 
 - Docker (for the backend)
 - Claude Code (for the plugin)
+- Node.js 22+ (if running without Docker)
 
 ## 1. Start the Backend
 
@@ -17,10 +18,16 @@ docker compose up -d
 
 The backend starts on `http://localhost:3000` with a SQLite database persisted to a Docker volume.
 
+Verify it's running:
+
+```bash
+curl http://localhost:3000/api/health
+# {"status":"ok","version":"0.3.0","active_nerves":0}
+```
+
 ## 2. Install the Plugin
 
 ```bash
-# From your project directory
 claude plugin install open-hive
 ```
 
@@ -42,7 +49,7 @@ identity:
 team: engineering
 ```
 
-That's it. The plugin hooks fire passively -- no commands to remember, no workflow changes.
+That's it. The plugin hooks fire passively — no commands to remember, no workflow changes. When a teammate is working on the same files or has overlapping intent, you'll see an inline alert.
 
 ## Try It Out
 
@@ -63,7 +70,7 @@ curl -X POST http://localhost:3000/api/signals/activity \
   -H 'Content-Type: application/json' \
   -d '{"session_id":"dev-a","file_path":"src/auth/login.ts","type":"file_modify"}'
 
-# Bob modifies the same file -- collision detected!
+# Bob modifies the same file — collision detected!
 curl -X POST http://localhost:3000/api/signals/activity \
   -H 'Content-Type: application/json' \
   -d '{"session_id":"dev-b","file_path":"src/auth/login.ts","type":"file_modify"}'
@@ -72,12 +79,20 @@ curl -X POST http://localhost:3000/api/signals/activity \
 # Check who's working on what
 curl http://localhost:3000/api/sessions/active?repo=my-app
 
-# Clean up
-curl -X POST http://localhost:3000/api/sessions/end \
-  -H 'Content-Type: application/json' -d '{"session_id":"dev-a"}'
-curl -X POST http://localhost:3000/api/sessions/end \
-  -H 'Content-Type: application/json' -d '{"session_id":"dev-b"}'
+# Check for agent mail (auto-generated collision alerts)
+curl http://localhost:3000/api/mail/check?session_id=dev-b
 ```
+
+## Useful Commands
+
+Once the plugin is installed, these commands are available in Claude Code:
+
+| Command | Description |
+|---------|-------------|
+| `/hive setup` | Configure backend URL and identity |
+| `/hive status` | Show your active session and any collisions |
+| `/hive who` | List all active developers in the current repo |
+| `/hive history` | View recent activity signals |
 
 ## Development Setup (without Docker)
 
@@ -92,21 +107,10 @@ node dist/server.js
 ### Dev Commands
 
 ```bash
-# Install dependencies
-npm install
-
-# Build all packages
-npm run build
-
-# Development mode (watch)
-npm run dev
-
-# Run tests
-npm run test
-
-# Run backend unit tests directly
-cd packages/backend
-node --import tsx --test src/**/*.test.ts
+npm install           # Install dependencies
+npm run build         # Build all packages
+npm run dev           # Development mode (watch)
+npm run test          # Run full test suite (182 tests)
 ```
 
 ## Next Steps
