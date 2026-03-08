@@ -1,10 +1,14 @@
 import { HiveClient } from '../client/hive-client.js';
 import { loadClientConfig } from '../config/config.js';
-import { basename } from 'node:path';
+import { NerveState } from '../nerve/nerve-state.js';
+import { basename, join } from 'node:path';
 import type { Collision } from '@open-hive/shared';
 
 const config = loadClientConfig();
 const client = config?.backend_url ? new HiveClient(config.backend_url) : null;
+
+const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
+const nerveStatePath = join(home, '.open-hive', 'nerve-state.json');
 
 interface HookInput {
   session_id?: string;
@@ -42,10 +46,21 @@ function formatCollisions(collisions: Collision[]): string {
   }).join('\n');
 }
 
+function loadNerve(): NerveState {
+  const nerve = new NerveState(nerveStatePath);
+  nerve.load();
+  return nerve;
+}
+
 async function handleSessionStart(input: HookInput): Promise<Record<string, unknown>> {
   if (!client || !config) return {};
   const session_id = getSessionId(input);
   const repo = getRepo(input);
+
+  // Load nerve state and record session start
+  const nerve = loadNerve();
+  nerve.recordSessionStart(session_id, repo, input.cwd ?? process.cwd());
+  nerve.save(); // checkpoint — we started
 
   const result = await client.registerSession({
     session_id,
@@ -53,11 +68,40 @@ async function handleSessionStart(input: HookInput): Promise<Record<string, unkn
     developer_name: config.identity.display_name,
     repo,
     project_path: input.cwd ?? process.cwd(),
+    nerve_context: nerve.getCheckInContext(),
   });
 
   if (!result) return {};
 
+  // Record collisions and mail from registration response into nerve state
+  for (const collision of result.active_collisions) {
+    nerve.recordCollision({
+      collision_id: collision.collision_id,
+      with_developer: collision.details,
+      area: '',
+      detected_at: collision.detected_at,
+    });
+  }
+  for (const mail of (result.unread_mail ?? [])) {
+    nerve.recordMailReceived({
+      from: mail.from_session_id ?? 'hive',
+      subject: mail.subject,
+      received_at: mail.created_at,
+    });
+  }
+  nerve.save();
+
   const messages: string[] = [];
+
+  // Show nerve context — what happened since last session
+  const nerveCtx = nerve.getCheckInContext();
+  if (nerveCtx.last_session) {
+    messages.push(`Open Hive: Last session — ${nerveCtx.last_session.intent ?? 'no intent'} in ${nerveCtx.last_session.repo} (${nerveCtx.last_session.outcome ?? 'interrupted'})`);
+  }
+  if (nerveCtx.active_blockers.length > 0) {
+    messages.push(`Open Hive: Active blockers: ${nerveCtx.active_blockers.join(', ')}`);
+  }
+
   if (result.active_sessions_in_repo.length > 0) {
     messages.push('Open Hive: Active sessions in this repo:');
     for (const s of result.active_sessions_in_repo) {
@@ -84,6 +128,11 @@ async function handleUserPromptSubmit(input: HookInput): Promise<Record<string, 
   const prompt = input.prompt ?? input.user_prompt ?? '';
   if (!prompt) return {};
 
+  // Record intent in nerve state
+  const nerve = loadNerve();
+  nerve.recordIntent(prompt);
+  nerve.save();
+
   const result = await client.sendIntent({
     session_id,
     content: prompt,
@@ -91,6 +140,18 @@ async function handleUserPromptSubmit(input: HookInput): Promise<Record<string, 
   });
 
   if (!result || result.collisions.length === 0) return {};
+
+  // Record any new collisions
+  for (const collision of result.collisions) {
+    nerve.recordCollision({
+      collision_id: collision.collision_id,
+      with_developer: collision.details,
+      area: '',
+      detected_at: collision.detected_at,
+    });
+  }
+  nerve.save();
+
   return { systemMessage: formatCollisions(result.collisions) };
 }
 
@@ -119,6 +180,11 @@ async function handlePostToolUse(input: HookInput): Promise<Record<string, unkno
   const filePath = input.tool_input?.file_path as string | undefined;
   if (!filePath) return {};
 
+  // Record file touch in nerve state
+  const nerve = loadNerve();
+  nerve.recordFileTouch(filePath);
+  nerve.save();
+
   const session_id = getSessionId(input);
   await client.sendActivity({
     session_id,
@@ -130,8 +196,20 @@ async function handlePostToolUse(input: HookInput): Promise<Record<string, unkno
 }
 
 async function handleSessionEnd(input: HookInput): Promise<Record<string, unknown>> {
+  // Snapshot session to nerve state
+  const nerve = loadNerve();
+  nerve.recordSessionEnd('completed');
+  nerve.save();
+
   if (!client) return {};
   await client.endSession({ session_id: getSessionId(input) });
+  return {};
+}
+
+async function handleStop(_input: HookInput): Promise<Record<string, unknown>> {
+  // Checkpoint nerve state to disk (crash protection)
+  const nerve = loadNerve();
+  nerve.save();
   return {};
 }
 
@@ -184,6 +262,9 @@ async function main() {
       break;
     case 'SessionEnd':
       result = await handleSessionEnd(input);
+      break;
+    case 'Stop':
+      result = await handleStop(input);
       break;
     case 'PreCompact':
       result = await handlePreCompact(input);
