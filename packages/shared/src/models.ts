@@ -86,3 +86,39 @@ export type AgentMailType =
   | 'blocker_notice'        // "I'm stuck on something in your area"
   | 'completion_notice'     // "I finished work relevant to you"
   | 'general';              // freeform
+
+// --- Nerve Registration ---
+
+export interface AgentCard {
+  agent_id: string;
+  name: string;
+  description: string;
+  version: string;
+  human_client: {
+    email: string;
+    display_name: string;
+    org?: string;
+    teams?: string[];
+  };
+  capabilities: {
+    sensory: SignalType[];      // what signal types this nerve can emit
+    motor: DirectiveType[];    // what directive types this nerve can receive
+  };
+  endpoint_url?: string;        // where to send directives (push)
+  registered_at: string;
+  last_seen: string;
+  status: 'active' | 'idle' | 'disconnected';
+}
+
+export type DirectiveType =
+  | 'context_injection'       // push relevant context to the agent
+  | 'collision_alert'         // alert about detected collision
+  | 'mail_delivery'           // deliver agent mail
+  | 'coordination_nudge';     // suggest an action
+
+export interface Nerve {
+  nerve_id: string;
+  agent_card: AgentCard;
+  nerve_type: string;           // e.g., 'claude-code', 'open-workshop', 'jira', 'teams'
+  created_at: string;
+}
