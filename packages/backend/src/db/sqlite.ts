@@ -55,6 +55,7 @@ export function createSQLiteDB(dbPath: string): DatabaseSync {
       mail_id TEXT PRIMARY KEY,
       from_session_id TEXT,
       to_session_id TEXT,
+      to_developer_email TEXT,
       to_context_id TEXT,
       type TEXT NOT NULL,
       subject TEXT NOT NULL,
@@ -78,6 +79,7 @@ export function createSQLiteDB(dbPath: string): DatabaseSync {
     CREATE INDEX IF NOT EXISTS idx_signals_file ON signals(file_path);
     CREATE INDEX IF NOT EXISTS idx_collisions_resolved ON collisions(resolved);
     CREATE INDEX IF NOT EXISTS idx_mail_to_session ON agent_mail(to_session_id);
+    CREATE INDEX IF NOT EXISTS idx_mail_to_developer ON agent_mail(to_developer_email);
     CREATE INDEX IF NOT EXISTS idx_mail_to_context ON agent_mail(to_context_id);
     CREATE INDEX IF NOT EXISTS idx_mail_read ON agent_mail(read_at);
     CREATE INDEX IF NOT EXISTS idx_nerves_type ON nerves(nerve_type);

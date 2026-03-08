@@ -156,6 +156,48 @@ describe('NerveState — cross-process persistence', () => {
     assert.equal(verify.state.current_session, null);
   });
 
+  it('crash recovery: stale session is auto-snapshotted to last_session as interrupted', () => {
+    const fp = join(tempDir, 'crash-recovery.json');
+
+    // Process 1: SessionStart for session A
+    const p1 = new NerveState(fp);
+    p1.load();
+    p1.recordSessionStart('sess-a', 'repo-a', '/code/a');
+    p1.save();
+
+    // Process 2: Intent + file touches during session A
+    const p2 = new NerveState(fp);
+    p2.load();
+    p2.recordIntent('fix the auth bug');
+    p2.recordFileTouch('src/auth/login.ts');
+    p2.recordFileTouch('src/auth/types.ts');
+    p2.save();
+
+    // 💥 CRASH — no recordSessionEnd fires
+
+    // Process 3: New session starts (after crash recovery)
+    const p3 = new NerveState(fp);
+    p3.load();
+    p3.recordSessionStart('sess-b', 'repo-a', '/code/a');
+    p3.save();
+
+    // Verify: crashed session A was auto-snapshotted to last_session
+    const verify = new NerveState(fp);
+    verify.load();
+    assert.ok(verify.state.last_session, 'Crashed session should be snapshotted to last_session');
+    assert.equal(verify.state.last_session!.id, 'sess-a');
+    assert.equal(verify.state.last_session!.repo, 'repo-a');
+    assert.equal(verify.state.last_session!.intent, 'fix the auth bug');
+    assert.equal(verify.state.last_session!.outcome, 'interrupted');
+    assert.ok(verify.state.last_session!.files_touched.includes('src/auth/login.ts'));
+    assert.ok(verify.state.last_session!.files_touched.includes('src/auth/types.ts'));
+    assert.ok(verify.state.last_session!.areas.includes('src/auth'));
+
+    // New session B should be active
+    assert.equal(verify.state.current_session!.id, 'sess-b');
+    assert.equal(verify.state.current_session!.intent, null);
+  });
+
   it('current_session is visible during an active session', () => {
     const fp = join(tempDir, 'active.json');
 

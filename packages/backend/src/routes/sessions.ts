@@ -60,7 +60,7 @@ export function sessionRoutes(app: FastifyInstance, registry: PortRegistry, _eng
           timestamp: hi.timestamp,
         }));
 
-      const unreadMail = await store.getUnreadMail(session_id);
+      const unreadMail = await store.getUnreadMail({ session_id, developer_email });
 
       // Auto-register a Claude Code nerve for this session
       const agent_id = `cc-${session_id}`;

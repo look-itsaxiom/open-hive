@@ -158,6 +158,19 @@ export class NerveState {
   }
 
   recordSessionStart(sessionId: string, repo: string, _projectPath: string): void {
+    // If there's a stale current_session from a crash, snapshot it
+    if (this._currentSessionId && this._currentSessionId !== sessionId) {
+      this.state.last_session = {
+        id: this._currentSessionId,
+        repo: this._currentRepo ?? '',
+        ended_at: new Date().toISOString(),
+        intent: this._currentIntent,
+        files_touched: [...this._currentFilesTouched],
+        areas: [...this._currentAreas],
+        outcome: 'interrupted',
+      };
+    }
+
     this._currentSessionId = sessionId;
     this._currentRepo = repo;
     this._currentIntent = null;

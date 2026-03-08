@@ -49,6 +49,7 @@ interface MailRow {
   mail_id: string;
   from_session_id: string | null;
   to_session_id: string | null;
+  to_developer_email: string | null;
   to_context_id: string | null;
   type: string;
   subject: string;
@@ -258,20 +259,58 @@ export class HiveStore implements IHiveStore, INerveRegistry {
 
   async createMail(m: Omit<AgentMail, 'mail_id' | 'read_at' | 'weight'>): Promise<AgentMail> {
     const mail_id = nanoid();
+
+    // Resolve developer_email from the target session (if addressed to a session)
+    let to_developer_email: string | null = null;
+    if (m.to_session_id) {
+      const targetSession = await this.getSession(m.to_session_id);
+      if (targetSession) {
+        to_developer_email = targetSession.developer_email;
+      }
+    }
+
     const stmt = this.db.prepare(
-      `INSERT INTO agent_mail (mail_id, from_session_id, to_session_id, to_context_id, type, subject, content, created_at, read_at, weight)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 1.0)`
+      `INSERT INTO agent_mail (mail_id, from_session_id, to_session_id, to_developer_email, to_context_id, type, subject, content, created_at, read_at, weight)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1.0)`
     );
-    stmt.run(mail_id, m.from_session_id ?? null, m.to_session_id ?? null, m.to_context_id ?? null, m.type, m.subject, m.content, m.created_at);
+    stmt.run(mail_id, m.from_session_id ?? null, m.to_session_id ?? null, to_developer_email, m.to_context_id ?? null, m.type, m.subject, m.content, m.created_at);
     return { ...m, mail_id, read_at: null, weight: 1.0 };
   }
 
-  async getUnreadMail(session_id: string): Promise<AgentMail[]> {
-    const stmt = this.db.prepare(
-      `SELECT * FROM agent_mail WHERE to_session_id = ? AND read_at IS NULL ORDER BY created_at DESC`
-    );
-    const rows = stmt.all(session_id) as unknown as MailRow[];
-    return rows.map(r => this.rowToMail(r));
+  async getUnreadMail(sessionIdOrOpts: string | { session_id?: string; developer_email?: string }): Promise<AgentMail[]> {
+    const opts = typeof sessionIdOrOpts === 'string'
+      ? { session_id: sessionIdOrOpts }
+      : sessionIdOrOpts;
+
+    const conditions: string[] = ['read_at IS NULL'];
+    const params: string[] = [];
+
+    if (opts.session_id && opts.developer_email) {
+      conditions.push('(to_session_id = ? OR to_developer_email = ?)');
+      params.push(opts.session_id, opts.developer_email);
+    } else if (opts.session_id) {
+      conditions.push('to_session_id = ?');
+      params.push(opts.session_id);
+    } else if (opts.developer_email) {
+      conditions.push('to_developer_email = ?');
+      params.push(opts.developer_email);
+    }
+
+    const sql = `SELECT * FROM agent_mail WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC`;
+    const stmt = this.db.prepare(sql);
+    const rows = stmt.all(...params) as unknown as MailRow[];
+
+    // Deduplicate by mail_id (in case both conditions match the same mail)
+    const seen = new Set<string>();
+    const unique: MailRow[] = [];
+    for (const row of rows) {
+      if (!seen.has(row.mail_id)) {
+        seen.add(row.mail_id);
+        unique.push(row);
+      }
+    }
+
+    return unique.map(r => this.rowToMail(r));
   }
 
   async getMailByContext(context_id: string): Promise<AgentMail[]> {

@@ -47,7 +47,7 @@ export interface IHiveStore {
 
   // --- Agent Mail ---
   createMail(m: Omit<AgentMail, 'mail_id' | 'read_at' | 'weight'>): Promise<AgentMail>;
-  getUnreadMail(session_id: string): Promise<AgentMail[]>;
+  getUnreadMail(sessionIdOrOpts: string | { session_id?: string; developer_email?: string }): Promise<AgentMail[]>;
   getMailByContext(context_id: string): Promise<AgentMail[]>;
   markMailRead(mail_id: string): Promise<void>;
 }

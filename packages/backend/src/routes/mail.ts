@@ -65,7 +65,12 @@ export function mailRoutes(app: FastifyInstance, registry: PortRegistry) {
         });
       }
 
-      const rawMail = await store.getUnreadMail(session_id);
+      // Look up developer_email from the session to also find mail addressed to other sessions by the same developer
+      const session = await store.getSession(session_id);
+      const developer_email = session?.developer_email;
+      const rawMail = await store.getUnreadMail(developer_email
+        ? { session_id, developer_email }
+        : session_id);
       // Apply decay weights — mail has created_at (not timestamp) so we map
       const mail = rawMail.map(m => ({
         ...m,
