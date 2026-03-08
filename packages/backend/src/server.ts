@@ -16,6 +16,7 @@ import { signalRoutes } from './routes/signals.js';
 import { conflictRoutes } from './routes/conflicts.js';
 import { historyRoutes } from './routes/history.js';
 import { richSignalRoutes } from './routes/rich-signals.js';
+import { mailRoutes } from './routes/mail.js';
 
 const config = loadConfig();
 const store = createStore(config);
@@ -72,6 +73,7 @@ signalRoutes(app, registry, engine);
 conflictRoutes(app, registry, engine);
 historyRoutes(app, registry);
 richSignalRoutes(app, registry, engine);
+mailRoutes(app, registry);
 
 // Periodic cleanup of stale sessions
 const cleanupIntervalMs = config.session.heartbeat_interval_seconds * 1000;

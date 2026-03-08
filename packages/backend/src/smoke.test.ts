@@ -23,6 +23,7 @@ import { signalRoutes } from './routes/signals.js';
 import { conflictRoutes } from './routes/conflicts.js';
 import { historyRoutes } from './routes/history.js';
 import { richSignalRoutes } from './routes/rich-signals.js';
+import { mailRoutes } from './routes/mail.js';
 import type { HiveBackendConfig } from '@open-hive/shared';
 
 function createTestConfig(): HiveBackendConfig {
@@ -137,6 +138,7 @@ async function buildTestServer(): Promise<FastifyInstance> {
   conflictRoutes(app, registry, engine);
   historyRoutes(app, registry);
   richSignalRoutes(app, registry, engine);
+  mailRoutes(app, registry);
 
   return app;
 }
@@ -626,5 +628,128 @@ describe('Smoke: rich signal endpoint', () => {
     assert.equal(body.ok, true);
     // Should detect semantic overlap with Alice's earlier intent_declared
     assert.ok(body.collisions.length >= 1, 'Should detect semantic collision');
+  });
+});
+
+// ─── Agent Mail Smoke Tests ─────────────────────────────────
+
+describe('Smoke: agent mail', () => {
+  let app: FastifyInstance;
+  before(async () => { app = await buildTestServer(); });
+  after(async () => { await app.close(); });
+
+  it('agent sends mail → recipient picks it up → marks read', async () => {
+    // Register Alice and Bob
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'mail-alice', developer_email: 'alice@test.com',
+        developer_name: 'Alice', repo: 'app', project_path: '/code/app',
+      },
+    });
+    await app.inject({
+      method: 'POST', url: '/api/sessions/register',
+      payload: {
+        session_id: 'mail-bob', developer_email: 'bob@test.com',
+        developer_name: 'Bob', repo: 'app', project_path: '/code/app',
+      },
+    });
+
+    // Alice sends mail to Bob
+    const send = await app.inject({
+      method: 'POST', url: '/api/mail/send',
+      payload: {
+        from_session_id: 'mail-alice',
+        to_session_id: 'mail-bob',
+        type: 'context_share',
+        subject: 'Auth refactor heads up',
+        content: 'I refactored the JWT middleware — your login flow may need updating',
+      },
+    });
+    assert.equal(send.statusCode, 200);
+    const sendBody = JSON.parse(send.body);
+    assert.equal(sendBody.ok, true);
+    assert.ok(sendBody.mail.mail_id);
+    assert.equal(sendBody.mail.type, 'context_share');
+    assert.equal(sendBody.mail.from_session_id, 'mail-alice');
+    assert.equal(sendBody.mail.to_session_id, 'mail-bob');
+
+    // Bob checks mail
+    const check = await app.inject({
+      method: 'GET', url: '/api/mail/check?session_id=mail-bob',
+    });
+    assert.equal(check.statusCode, 200);
+    const checkBody = JSON.parse(check.body);
+    assert.equal(checkBody.mail.length, 1);
+    assert.equal(checkBody.mail[0].subject, 'Auth refactor heads up');
+
+    // Bob marks it read
+    const mark = await app.inject({
+      method: 'POST', url: '/api/mail/read',
+      payload: { mail_id: checkBody.mail[0].mail_id },
+    });
+    assert.equal(mark.statusCode, 200);
+
+    // Check again — no unread mail
+    const check2 = await app.inject({
+      method: 'GET', url: '/api/mail/check?session_id=mail-bob',
+    });
+    const check2Body = JSON.parse(check2.body);
+    assert.equal(check2Body.mail.length, 0);
+  });
+
+  it('consciousness-generated mail (no from_session_id) is delivered', async () => {
+    const send = await app.inject({
+      method: 'POST', url: '/api/mail/send',
+      payload: {
+        to_session_id: 'mail-alice',
+        type: 'collision_alert',
+        subject: 'Potential overlap detected',
+        content: 'Bob is working in the same auth area as you',
+      },
+    });
+    assert.equal(send.statusCode, 200);
+    const sendBody = JSON.parse(send.body);
+    assert.equal(sendBody.mail.from_session_id, null);
+
+    const check = await app.inject({
+      method: 'GET', url: '/api/mail/check?session_id=mail-alice',
+    });
+    const body = JSON.parse(check.body);
+    assert.ok(body.mail.some((m: any) => m.type === 'collision_alert'));
+  });
+
+  it('rejects mail with missing required fields', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/mail/send',
+      payload: { type: 'general' }, // missing subject and content
+    });
+    assert.equal(res.statusCode, 400);
+  });
+
+  it('rejects mail with no recipient', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/mail/send',
+      payload: {
+        type: 'general',
+        subject: 'test',
+        content: 'test',
+        // no to_session_id or to_context_id
+      },
+    });
+    assert.equal(res.statusCode, 400);
+  });
+
+  it('rejects mail with invalid type', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/mail/send',
+      payload: {
+        to_session_id: 'mail-alice',
+        type: 'invalid_type',
+        subject: 'test',
+        content: 'test',
+      },
+    });
+    assert.equal(res.statusCode, 400);
   });
 });
