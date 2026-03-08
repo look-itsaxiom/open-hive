@@ -1,5 +1,8 @@
 // packages/plugin/src/nerve/nerve-state.ts
 
+import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
+import { dirname } from 'node:path';
+
 export interface NerveStateData {
   /** Snapshot of the most recent completed session */
   last_session: {
@@ -75,3 +78,42 @@ export const DEFAULT_NERVE_STATE: NerveStateData = {
 export const MAX_AREAS = 50;
 export const MAX_REPOS = 50;
 export const MAX_FILES_TOUCHED = 200;
+
+export class NerveState {
+  state: NerveStateData = structuredClone(DEFAULT_NERVE_STATE);
+
+  constructor(private filePath: string) {}
+
+  load(): void {
+    try {
+      const raw = readFileSync(this.filePath, 'utf-8');
+      const parsed = JSON.parse(raw);
+      this.state = {
+        ...structuredClone(DEFAULT_NERVE_STATE),
+        ...parsed,
+        carry_forward: {
+          ...structuredClone(DEFAULT_NERVE_STATE.carry_forward),
+          ...(parsed.carry_forward ?? {}),
+        },
+        profile: {
+          ...structuredClone(DEFAULT_NERVE_STATE.profile),
+          ...(parsed.profile ?? {}),
+        },
+      };
+    } catch {
+      this.state = structuredClone(DEFAULT_NERVE_STATE);
+    }
+  }
+
+  save(): void {
+    try {
+      const dir = dirname(this.filePath);
+      mkdirSync(dir, { recursive: true });
+      const tmp = this.filePath + '.tmp';
+      writeFileSync(tmp, JSON.stringify(this.state, null, 2), 'utf-8');
+      renameSync(tmp, this.filePath);
+    } catch {
+      // Never block the developer — log and move on
+    }
+  }
+}
