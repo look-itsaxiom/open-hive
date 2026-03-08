@@ -10,6 +10,18 @@ export interface RegisterSessionRequest {
   developer_name: string;
   repo: string;
   project_path: string;
+  nerve_context?: {
+    last_session?: {
+      repo: string;
+      intent: string | null;
+      ended_at: string;
+      outcome: 'completed' | 'interrupted' | null;
+    };
+    active_blockers?: string[];
+    unresolved_collisions?: string[];
+    frequent_areas?: string[];
+    repos_active_in?: string[];
+  };
 }
 
 export interface RecentHistoricalIntent {

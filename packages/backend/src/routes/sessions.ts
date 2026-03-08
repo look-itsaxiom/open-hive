@@ -87,6 +87,10 @@ export function sessionRoutes(app: FastifyInstance, registry: PortRegistry, _eng
         await registry.nerves.updateLastSeen(agent_id);
       }
 
+      if (req.body.nerve_context) {
+        req.log.info({ nerve_context: req.body.nerve_context }, 'Nerve context received');
+      }
+
       return {
         ok: true,
         active_collisions,
