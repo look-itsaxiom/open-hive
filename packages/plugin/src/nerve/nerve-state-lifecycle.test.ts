@@ -1,6 +1,6 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { NerveState } from './nerve-state.js';
@@ -93,5 +93,82 @@ describe('NerveState — multi-session lifecycle', () => {
     const ns2 = new NerveState(filePath);
     ns2.load();
     assert.equal(ns2.state.carry_forward.unresolved_collisions.length, 0);
+  });
+});
+
+describe('NerveState — cross-process persistence', () => {
+  let tempDir: string;
+  let filePath: string;
+
+  before(() => {
+    tempDir = mkdtempSync(join(tmpdir(), 'nerve-xproc-'));
+    filePath = join(tempDir, 'nerve-state.json');
+  });
+  after(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('accumulates intent and files across separate process instances', () => {
+    // Process 1: SessionStart hook
+    const p1 = new NerveState(filePath);
+    p1.load();
+    p1.recordSessionStart('sess-xp', 'my-repo', '/code/my-repo');
+    p1.save();
+
+    // Process 2: UserPromptSubmit hook (fresh instance, like a new process)
+    const p2 = new NerveState(filePath);
+    p2.load();
+    p2.recordIntent('fix the auth bug');
+    p2.save();
+
+    // Process 3: PostToolUse hook (another fresh instance)
+    const p3 = new NerveState(filePath);
+    p3.load();
+    p3.recordFileTouch('src/auth/login.ts');
+    p3.save();
+
+    // Process 4: PostToolUse hook (yet another file)
+    const p4 = new NerveState(filePath);
+    p4.load();
+    p4.recordFileTouch('src/auth/types.ts');
+    p4.save();
+
+    // Process 5: SessionEnd hook (fresh instance — must have accumulated state)
+    const p5 = new NerveState(filePath);
+    p5.load();
+    p5.recordSessionEnd('completed');
+    p5.save();
+
+    // Verify: last_session has the full accumulated data
+    const verify = new NerveState(filePath);
+    verify.load();
+    assert.ok(verify.state.last_session);
+    assert.equal(verify.state.last_session.id, 'sess-xp');
+    assert.equal(verify.state.last_session.repo, 'my-repo');
+    assert.equal(verify.state.last_session.intent, 'fix the auth bug');
+    assert.equal(verify.state.last_session.files_touched.length, 2);
+    assert.ok(verify.state.last_session.files_touched.includes('src/auth/login.ts'));
+    assert.ok(verify.state.last_session.files_touched.includes('src/auth/types.ts'));
+    assert.ok(verify.state.last_session.areas.includes('src/auth'));
+    assert.equal(verify.state.last_session.outcome, 'completed');
+
+    // current_session should be cleared after session end
+    assert.equal(verify.state.current_session, null);
+  });
+
+  it('current_session is visible during an active session', () => {
+    const fp = join(tempDir, 'active.json');
+
+    const p1 = new NerveState(fp);
+    p1.load();
+    p1.recordSessionStart('sess-active', 'repo-a', '/code/a');
+    p1.recordIntent('build feature X');
+    p1.save();
+
+    // Read the raw JSON — current_session should be persisted
+    const raw = JSON.parse(readFileSync(fp, 'utf-8'));
+    assert.ok(raw.current_session);
+    assert.equal(raw.current_session.id, 'sess-active');
+    assert.equal(raw.current_session.intent, 'build feature X');
   });
 });

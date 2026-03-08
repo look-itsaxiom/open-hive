@@ -15,6 +15,15 @@ export interface NerveStateData {
     outcome: 'completed' | 'interrupted' | null;
   } | null;
 
+  /** Active session tracking — persisted to survive cross-process hook invocations */
+  current_session: {
+    id: string;
+    repo: string;
+    intent: string | null;
+    files_touched: string[];
+    areas: string[];
+  } | null;
+
   /** Context that carries forward between sessions */
   carry_forward: {
     blockers: Array<{
@@ -64,6 +73,7 @@ export interface NerveCheckInContext {
 
 export const DEFAULT_NERVE_STATE: NerveStateData = {
   last_session: null,
+  current_session: null,
   carry_forward: {
     blockers: [],
     unresolved_collisions: [],
@@ -112,17 +122,38 @@ export class NerveState {
     } catch {
       this.state = structuredClone(DEFAULT_NERVE_STATE);
     }
+
+    // Restore in-memory tracking from persisted current_session
+    if (this.state.current_session) {
+      this._currentSessionId = this.state.current_session.id;
+      this._currentRepo = this.state.current_session.repo;
+      this._currentIntent = this.state.current_session.intent;
+      this._currentFilesTouched = [...this.state.current_session.files_touched];
+      this._currentAreas = new Set(this.state.current_session.areas);
+    }
   }
 
   save(): void {
+    // Persist in-memory tracking to current_session before writing
+    if (this._currentSessionId) {
+      this.state.current_session = {
+        id: this._currentSessionId,
+        repo: this._currentRepo ?? '',
+        intent: this._currentIntent,
+        files_touched: [...this._currentFilesTouched],
+        areas: [...this._currentAreas],
+      };
+    }
+
     try {
       const dir = dirname(this.filePath);
       mkdirSync(dir, { recursive: true });
       const tmp = this.filePath + '.tmp';
       writeFileSync(tmp, JSON.stringify(this.state, null, 2), 'utf-8');
       renameSync(tmp, this.filePath);
-    } catch {
+    } catch (err) {
       // Never block the developer — log and move on
+      process.stderr.write(`[open-hive] nerve-state save failed: ${err}\n`);
     }
   }
 
@@ -197,6 +228,14 @@ export class NerveState {
       areas: [...this._currentAreas],
       outcome: outcome ?? null,
     };
+
+    // Clear active session — it's been snapshotted
+    this._currentSessionId = null;
+    this._currentRepo = null;
+    this._currentIntent = null;
+    this._currentFilesTouched = [];
+    this._currentAreas = new Set();
+    this.state.current_session = null;
   }
 
   recordCollision(collision: {
@@ -238,7 +277,7 @@ export class NerveState {
       } : null,
       active_blockers: this.state.carry_forward.blockers.map(b => b.text),
       unresolved_collisions: this.state.carry_forward.unresolved_collisions.map(c => c.collision_id),
-      frequent_areas: this.state.profile.areas
+      frequent_areas: [...this.state.profile.areas]
         .sort((a, b) => b.session_count - a.session_count)
         .slice(0, 10)
         .map(a => a.path),

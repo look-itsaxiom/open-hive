@@ -202,7 +202,7 @@ export class HiveStore implements IHiveStore, INerveRegistry {
   }): Promise<HistoricalIntent[]> {
     const limit = opts.limit ?? 100;
     const since = opts.since ?? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const conditions = [`s.type = 'prompt'`, `s.timestamp > ?`];
+    const conditions = [`s.type IN ('prompt', 'intent_declared')`, `s.timestamp > ?`];
     const params: unknown[] = [since];
 
     if (opts.repo) {
