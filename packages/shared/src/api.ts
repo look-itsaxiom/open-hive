@@ -1,5 +1,5 @@
 import type {
-  Session, Signal, Collision, SignalType,
+  Session, Signal, Collision, SignalType, AgentMail, AgentMailType,
 } from './models.js';
 
 // --- Requests ---
@@ -10,6 +10,18 @@ export interface RegisterSessionRequest {
   developer_name: string;
   repo: string;
   project_path: string;
+  nerve_context?: {
+    last_session?: {
+      repo: string;
+      intent: string | null;
+      ended_at: string;
+      outcome: 'completed' | 'interrupted' | null;
+    };
+    active_blockers?: string[];
+    unresolved_collisions?: string[];
+    frequent_areas?: string[];
+    repos_active_in?: string[];
+  };
 }
 
 export interface RecentHistoricalIntent {
@@ -23,6 +35,7 @@ export interface RegisterSessionResponse {
   active_collisions: Collision[];
   active_sessions_in_repo: Pick<Session, 'session_id' | 'developer_name' | 'intent' | 'areas'>[];
   recent_historical_intents: RecentHistoricalIntent[];
+  unread_mail: AgentMail[];
 }
 
 export interface HeartbeatRequest {
@@ -92,4 +105,40 @@ export interface HistoryRequest {
 export interface HistoryResponse {
   signals: Signal[];
   sessions: Pick<Session, 'session_id' | 'developer_name' | 'repo' | 'intent' | 'started_at'>[];
+}
+
+export interface RichSignalRequest {
+  session_id: string;
+  type: SignalType;
+  content: string;
+  file_path?: string;
+  semantic_area?: string;
+  context_id?: string;  // A2A-inspired: groups related work
+}
+
+export interface RichSignalResponse {
+  ok: boolean;
+  signal: Signal;
+  collisions: Collision[];
+}
+
+// --- Agent Mail ---
+
+export interface SendMailRequest {
+  from_session_id?: string;     // optional — null means consciousness-generated
+  to_session_id?: string;       // optional — target specific session
+  to_context_id?: string;       // optional — target a workstream
+  type: AgentMailType;
+  subject: string;
+  content: string;
+}
+
+export interface SendMailResponse {
+  ok: boolean;
+  mail: AgentMail;
+}
+
+export interface CheckMailResponse {
+  ok: boolean;
+  mail: AgentMail[];
 }
