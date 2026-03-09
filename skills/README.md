@@ -18,10 +18,12 @@ Open Hive uses a hexagonal (ports & adapters) architecture. All extension points
 
 ```
 PortRegistry {
-  store:      IHiveStore          — where data lives
+  store:      IHiveStore          — where data lives (sessions, signals, collisions, mail)
   identity:   IIdentityProvider   — who is making requests
   analyzers:  ISemanticAnalyzer[] — how intents are compared
   alerts:     AlertDispatcher     — where alerts go (holds IAlertSink[])
+  decay:      DecayService        — signal/mail weight decay over time
+  nerves:     INerveRegistry      — connected nerve registration and discovery
 }
 ```
 
@@ -69,10 +71,19 @@ The body contains numbered steps with complete code blocks, exact file paths, an
 
 ## How to use a skill
 
+### With the admin plugin (recommended)
+
+1. Install the admin plugin: `claude plugin install open-hive-admin`
+2. List available skills: `/hive-admin list`
+3. Install a skill: `/hive-admin install add-slack`
+4. Set the required environment variables and restart the backend.
+
+### Without the admin plugin
+
 1. Open a Claude Code session in the Open Hive repo.
-2. Ask Claude to apply a skill: _"Apply the add-slack skill"_ or _"Follow the instructions in skills/add-slack/SKILL.md to add Slack notifications."_
-3. Claude reads the SKILL.md and executes each step: creating files, editing existing files, and running the verification command.
-4. Set the required environment variables (documented in the skill's Configuration section) and restart the backend.
+2. Ask Claude to apply a skill: _"Apply the add-slack skill"_ or _"Follow the instructions in skills/add-slack/SKILL.md."_
+3. Claude reads the SKILL.md and executes each step.
+4. Set the required environment variables and restart the backend.
 
 ## Writing a new skill
 
@@ -98,6 +109,6 @@ Skills implement one of four port interfaces from `@open-hive/shared`:
 | `IAlertSink` | notification | Send collision alerts | Slack, Teams, Discord |
 | `IIdentityProvider` | auth | Authenticate developers | GitHub OAuth, GitLab OAuth |
 | `ISemanticAnalyzer` | collision-tier | Compare developer intents | Embeddings (L3b), LLM (L3c) |
-| `IHiveStore` | store | Persist data | PostgreSQL |
+| `IHiveStore` + `INerveRegistry` | store | Persist data + manage nerves | PostgreSQL |
 
 Each adapter is registered via the `PortRegistry` at startup. See the `build-skill` meta-guide for implementation templates and registration patterns.

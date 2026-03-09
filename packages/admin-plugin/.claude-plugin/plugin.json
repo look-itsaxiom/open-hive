@@ -1,0 +1,12 @@
+{
+  "name": "open-hive-admin",
+  "version": "0.1.0",
+  "description": "Admin toolkit for deploying and configuring an Open Hive backend — install integrations, manage ports, monitor health",
+  "author": {
+    "name": "Chase Skibeness",
+    "url": "https://github.com/look-itsaxiom"
+  },
+  "repository": "https://github.com/look-itsaxiom/open-hive",
+  "license": "MIT",
+  "keywords": ["coordination", "admin", "deployment", "skills", "integrations"]
+}
