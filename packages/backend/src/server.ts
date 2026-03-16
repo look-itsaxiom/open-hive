@@ -4,6 +4,8 @@ import { loadConfig } from './env.js';
 import { createStore } from './db/index.js';
 import { CollisionEngine } from './services/collision-engine.js';
 import { KeywordAnalyzer } from './services/keyword-analyzer.js';
+import { EmbeddingAnalyzer } from './services/embedding-analyzer.js';
+import { LLMAnalyzer } from './services/llm-analyzer.js';
 import { PassthroughIdentityProvider } from './services/passthrough-identity-provider.js';
 import { AlertDispatcher } from './services/alert-dispatcher.js';
 import { GenericWebhookSink } from './services/generic-webhook-sink.js';
@@ -26,6 +28,25 @@ const store = createStore(config);
 const analyzers: ISemanticAnalyzer[] = [];
 if (config.collision.semantic.keywords_enabled) {
   analyzers.push(new KeywordAnalyzer());
+}
+if (config.collision.semantic.embeddings_enabled) {
+  analyzers.push(new EmbeddingAnalyzer({
+    provider: config.collision.semantic.embeddings_provider!,
+    apiKey: config.collision.semantic.embeddings_api_key,
+    baseUrl: config.collision.semantic.embeddings_base_url,
+    model: config.collision.semantic.embeddings_model,
+    threshold: 0.75,
+  }));
+}
+if (config.collision.semantic.llm_enabled) {
+  analyzers.push(new LLMAnalyzer({
+    provider: config.collision.semantic.llm_provider! as 'openai' | 'anthropic' | 'ollama' | 'generic',
+    apiKey: config.collision.semantic.llm_api_key,
+    baseUrl: config.collision.semantic.llm_base_url,
+    model: config.collision.semantic.llm_model,
+    confidenceThreshold: config.collision.semantic.llm_confidence_threshold,
+    rateLimitPerMin: config.collision.semantic.llm_rate_limit_per_min,
+  }));
 }
 
 const engine = new CollisionEngine(store, config, analyzers);

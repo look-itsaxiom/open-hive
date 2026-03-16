@@ -15,7 +15,7 @@ function createTestConfig(overrides?: Partial<HiveBackendConfig>): HiveBackendCo
       semantic: {
         keywords_enabled: true,
         embeddings_enabled: false,
-        llm_enabled: false,
+        llm_enabled: false, llm_confidence_threshold: 0.7, llm_rate_limit_per_min: 10,
       },
     },
     alerts: { min_severity: 'info', webhook_urls: [] },
@@ -254,7 +254,7 @@ describe('CollisionEngine — L3a semantic collisions', () => {
     const config = createTestConfig({
       collision: {
         scope: 'org',
-        semantic: { keywords_enabled: false, embeddings_enabled: false, llm_enabled: false },
+        semantic: { keywords_enabled: false, embeddings_enabled: false, llm_enabled: false, llm_confidence_threshold: 0.7, llm_rate_limit_per_min: 10 },
       },
     });
     // When keywords_enabled is false, no analyzers are registered
@@ -294,7 +294,7 @@ describe('CollisionEngine — scope configuration', () => {
     const config = createTestConfig({
       collision: {
         scope: 'repo',
-        semantic: { keywords_enabled: true, embeddings_enabled: false, llm_enabled: false },
+        semantic: { keywords_enabled: true, embeddings_enabled: false, llm_enabled: false, llm_confidence_threshold: 0.7, llm_rate_limit_per_min: 10 },
       },
     });
     const engine = new CollisionEngine(store, config, [new KeywordAnalyzer()]);

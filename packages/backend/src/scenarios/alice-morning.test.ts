@@ -44,7 +44,7 @@ async function buildScenarioServer(): Promise<FastifyInstance> {
       semantic: {
         keywords_enabled: true,
         embeddings_enabled: false,
-        llm_enabled: false,
+        llm_enabled: false, llm_confidence_threshold: 0.7, llm_rate_limit_per_min: 10,
       },
     },
     alerts: { min_severity: 'info', webhook_urls: [] },

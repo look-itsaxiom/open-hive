@@ -24,9 +24,15 @@ export interface HiveBackendConfig {
       embeddings_enabled: boolean;
       embeddings_provider?: string;
       embeddings_api_key?: string;
+      embeddings_base_url?: string;
+      embeddings_model?: string;
       llm_enabled: boolean;
       llm_provider?: string;
       llm_api_key?: string;
+      llm_base_url?: string;
+      llm_model?: string;
+      llm_confidence_threshold: number;
+      llm_rate_limit_per_min: number;
     };
   };
   git_provider?: {

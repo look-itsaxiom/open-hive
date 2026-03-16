@@ -3,10 +3,11 @@ WORKDIR /app
 COPY package.json package-lock.json turbo.json tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/backend/package.json packages/backend/
+COPY packages/plugin/package.json packages/plugin/
 RUN npm ci --include=dev
 COPY packages/shared/ packages/shared/
 COPY packages/backend/ packages/backend/
-RUN npx turbo run build --filter=@open-hive/backend
+RUN npx tsc --build packages/backend/tsconfig.json --force
 
 FROM node:22-alpine
 WORKDIR /app
