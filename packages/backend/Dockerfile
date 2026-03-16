@@ -12,6 +12,7 @@ RUN npx tsc --build packages/backend/tsconfig.json --force
 FROM node:22-alpine
 WORKDIR /app
 COPY --from=build /app/packages/backend/dist ./dist
+COPY --from=build /app/packages/backend/src/dashboard/views ./dist/dashboard/views
 COPY --from=build /app/packages/backend/package.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/packages/shared/dist ./node_modules/@open-hive/shared/dist
