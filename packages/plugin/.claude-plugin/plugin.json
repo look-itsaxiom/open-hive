@@ -1,6 +1,6 @@
 {
   "name": "open-hive",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Developer collision detection — know what your team is working on before you collide",
   "author": {
     "name": "Chase Skibeness",
@@ -8,5 +8,12 @@
   },
   "repository": "https://github.com/look-itsaxiom/open-hive",
   "license": "MIT",
-  "keywords": ["coordination", "team", "collision-detection", "awareness"]
+  "keywords": ["coordination", "team", "collision-detection", "awareness"],
+  "mcpServers": {
+    "open-hive": {
+      "command": "npx",
+      "args": ["tsx", "${CLAUDE_PLUGIN_ROOT}/../src/mcp/index.ts"],
+      "cwd": "${CLAUDE_PLUGIN_ROOT}/.."
+    }
+  }
 }

@@ -8,6 +8,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "@open-hive/shared": "*"
   },
   "devDependencies": {

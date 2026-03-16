@@ -5,7 +5,11 @@ import type {
   CheckConflictsResponse,
   EndSessionRequest,
   ListActiveResponse,
+  HistoryResponse,
+  SendMailRequest, SendMailResponse,
+  CheckMailResponse,
 } from '@open-hive/shared';
+import type { Nerve } from '@open-hive/shared';
 
 export class HiveClient {
   constructor(private baseUrl: string) {}
@@ -39,6 +43,30 @@ export class HiveClient {
 
   async heartbeat(session_id: string): Promise<void> {
     await this.post('/api/sessions/heartbeat', { session_id });
+  }
+
+  async getHistory(repo: string, limit?: number): Promise<HistoryResponse | null> {
+    const params = new URLSearchParams({ repo });
+    if (limit) params.set('limit', String(limit));
+    return this.get(`/api/history?${params}`);
+  }
+
+  async resolveCollision(collision_id: string, resolved_by: string): Promise<boolean> {
+    const res = await this.post<{ resolved: boolean }>('/api/collisions/resolve', { collision_id, resolved_by });
+    return res?.resolved ?? false;
+  }
+
+  async checkMail(session_id: string): Promise<CheckMailResponse | null> {
+    return this.get(`/api/mail/check?session_id=${encodeURIComponent(session_id)}`);
+  }
+
+  async sendMail(mail: SendMailRequest): Promise<SendMailResponse | null> {
+    return this.post('/api/mail/send', mail);
+  }
+
+  async listNerves(nerve_type?: string): Promise<{ nerves: Nerve[] } | null> {
+    const params = nerve_type ? `?nerve_type=${encodeURIComponent(nerve_type)}` : '';
+    return this.get(`/api/nerves/active${params}`);
   }
 
   private async post<T>(path: string, body: unknown): Promise<T | null> {
