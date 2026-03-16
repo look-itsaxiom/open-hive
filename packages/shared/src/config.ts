@@ -49,7 +49,19 @@ export interface HiveBackendConfig {
   };
   identity: {
     /** Which identity provider to use. 'passthrough' trusts self-reported identity. */
-    provider: 'passthrough' | string;
+    provider: 'passthrough' | 'azure-devops' | string;
+    /** Whether authentication is enabled. When false, PassthroughIdentityProvider is used. */
+    auth_enabled: boolean;
+    /** Azure DevOps OAuth client ID (Microsoft Entra App Registration). */
+    azure_devops_client_id?: string;
+    /** Azure DevOps OAuth client secret. */
+    azure_devops_client_secret?: string;
+    /** Secret used to sign/verify JWT session tokens. */
+    jwt_secret?: string;
+    /** Optional: restrict login to members of this Azure DevOps organization. */
+    azure_devops_org?: string;
+    /** Public URL of this backend instance (used to build OAuth redirect URIs). */
+    public_url?: string;
   };
   decay: {
     /** Whether signal decay is enabled. */

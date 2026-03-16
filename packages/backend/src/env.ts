@@ -31,6 +31,12 @@ export function loadConfig(): HiveBackendConfig {
     },
     identity: {
       provider: process.env.IDENTITY_PROVIDER ?? 'passthrough',
+      auth_enabled: process.env.AUTH_ENABLED === 'true',
+      azure_devops_client_id: process.env.AZURE_DEVOPS_CLIENT_ID,
+      azure_devops_client_secret: process.env.AZURE_DEVOPS_CLIENT_SECRET,
+      jwt_secret: process.env.JWT_SECRET,
+      azure_devops_org: process.env.AZURE_DEVOPS_ORG,
+      public_url: process.env.PUBLIC_URL,
     },
     decay: {
       enabled: process.env.DECAY_ENABLED !== 'false',

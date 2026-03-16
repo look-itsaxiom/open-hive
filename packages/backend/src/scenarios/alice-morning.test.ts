@@ -48,7 +48,7 @@ async function buildScenarioServer(): Promise<FastifyInstance> {
       },
     },
     alerts: { min_severity: 'info', webhook_urls: [] },
-    identity: { provider: 'passthrough' },
+    identity: { provider: 'passthrough', auth_enabled: false },
     decay: { enabled: true, default_half_life_seconds: 86400, type_overrides: {}, floor: 0.01 },
     webhooks: { urls: [] },
     session: { heartbeat_interval_seconds: 30, idle_timeout_seconds: 300 },

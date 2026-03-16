@@ -1,0 +1,11 @@
+<h1>Active Sessions</h1>
+
+<div class="grid" id="sessions" hx-get="/dashboard/api/sessions" hx-trigger="every 5s" hx-swap="innerHTML">
+  {{#if sessions.length}}
+    {{#each sessions}}
+      {{> session-card this}}
+    {{/each}}
+  {{else}}
+    <div class="empty">No active sessions</div>
+  {{/if}}
+</div>

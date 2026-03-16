@@ -13,11 +13,16 @@
   },
   "dependencies": {
     "@fastify/cors": "^10",
+    "@fastify/static": "^9.0.0",
+    "@fastify/view": "^11.1.1",
     "@open-hive/shared": "*",
     "fastify": "^5",
+    "handlebars": "^4.7.8",
+    "jsonwebtoken": "^9.0.3",
     "nanoid": "^5"
   },
   "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^25.3.5",
     "tsx": "^4"
   }

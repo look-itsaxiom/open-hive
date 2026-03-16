@@ -12,7 +12,18 @@
       "description": "Developer collision detection — know what your team is working on before you collide",
       "source": "./packages/plugin",
       "category": "productivity",
-      "version": "0.2.0",
+      "version": "0.3.0",
+      "author": {
+        "name": "Chase Skibeness"
+      },
+      "license": "MIT"
+    },
+    {
+      "name": "open-hive-admin",
+      "description": "Developer collision detection — know what your team is working on before you collide",
+      "source": "./packages/admin-plugin",
+      "category": "productivity",
+      "version": "0.3.0",
       "author": {
         "name": "Chase Skibeness"
       },

@@ -1,0 +1,24 @@
+<h1>Collisions</h1>
+
+<div id="collisions" hx-get="/dashboard/api/collisions" hx-trigger="every 5s" hx-swap="innerHTML">
+  {{#if collisions.length}}
+    <table>
+      <thead>
+        <tr>
+          <th>Severity</th>
+          <th>Type</th>
+          <th>Details</th>
+          <th>Detected</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{#each collisions}}
+          {{> collision-row this}}
+        {{/each}}
+      </tbody>
+    </table>
+  {{else}}
+    <div class="empty">No active collisions</div>
+  {{/if}}
+</div>

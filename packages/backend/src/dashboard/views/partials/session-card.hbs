@@ -1,0 +1,12 @@
+<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">
+    <strong>{{developer_name}}</strong>
+    <span class="badge badge-{{status}}">{{status}}</span>
+  </div>
+  <div style="font-size:0.85rem;color:var(--text-muted)">
+    <div>{{developer_email}}</div>
+    <div>{{repo}} &middot; {{project_path}}</div>
+    {{#if intent}}<div style="margin-top:0.25rem;color:var(--text)">{{intent}}</div>{{/if}}
+    <div style="margin-top:0.25rem">Last activity: {{last_activity}}</div>
+  </div>
+</div>

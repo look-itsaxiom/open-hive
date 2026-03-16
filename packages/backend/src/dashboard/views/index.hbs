@@ -1,0 +1,53 @@
+<h1>Dashboard</h1>
+
+<div class="stat-row" hx-get="/dashboard/api/stats" hx-trigger="every 5s" hx-swap="innerHTML" hx-target="#stats">
+</div>
+<div id="stats" class="stat-row">
+  <div class="stat-box">
+    <div class="number">{{stats.active_sessions}}</div>
+    <div class="label">Active Sessions</div>
+  </div>
+  <div class="stat-box">
+    <div class="number">{{stats.active_collisions}}</div>
+    <div class="label">Active Collisions</div>
+  </div>
+  <div class="stat-box">
+    <div class="number">{{stats.total_signals}}</div>
+    <div class="label">Recent Signals</div>
+  </div>
+</div>
+
+<h2>Active Sessions</h2>
+<div class="grid" id="sessions" hx-get="/dashboard/api/sessions" hx-trigger="every 5s" hx-swap="innerHTML">
+  {{#if sessions.length}}
+    {{#each sessions}}
+      {{> session-card this}}
+    {{/each}}
+  {{else}}
+    <div class="empty">No active sessions</div>
+  {{/if}}
+</div>
+
+<h2>Recent Collisions</h2>
+<div id="collisions" hx-get="/dashboard/api/collisions" hx-trigger="every 5s" hx-swap="innerHTML">
+  {{#if collisions.length}}
+    <table>
+      <thead>
+        <tr>
+          <th>Severity</th>
+          <th>Type</th>
+          <th>Details</th>
+          <th>Detected</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{#each collisions}}
+          {{> collision-row this}}
+        {{/each}}
+      </tbody>
+    </table>
+  {{else}}
+    <div class="empty">No active collisions</div>
+  {{/if}}
+</div>

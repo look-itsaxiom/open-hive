@@ -1,0 +1,18 @@
+<tr>
+  <td><span class="badge badge-{{severity}}">{{severity}}</span></td>
+  <td>{{type}}</td>
+  <td>{{details}}</td>
+  <td>{{detected_at}}</td>
+  <td>
+    {{#unless resolved}}
+      <button hx-post="/dashboard/api/collisions/resolve"
+              hx-vals='{"collision_id":"{{collision_id}}"}'
+              hx-swap="outerHTML"
+              hx-target="closest tr">
+        Resolve
+      </button>
+    {{else}}
+      <span style="color:var(--green)">Resolved</span>
+    {{/unless}}
+  </td>
+</tr>
