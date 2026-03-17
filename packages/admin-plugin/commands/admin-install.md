@@ -1,5 +1,5 @@
 ---
-name: install
+name: admin-install
 description: "Install an Open Hive integration skill — e.g., /hive-admin install add-slack"
 args: "<skill-name>"
 allowed-tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "AskUserQuestion"]

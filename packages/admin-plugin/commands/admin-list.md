@@ -1,5 +1,5 @@
 ---
-name: list
+name: admin-list
 description: Show all available Open Hive integration skills
 allowed-tools: ["Read", "Bash", "Glob"]
 ---

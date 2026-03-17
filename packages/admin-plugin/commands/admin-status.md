@@ -1,5 +1,5 @@
 ---
-name: status
+name: admin-status
 description: Show Open Hive backend configuration — installed skills, port implementations, and health
 allowed-tools: ["Read", "Bash", "Glob", "Grep"]
 ---

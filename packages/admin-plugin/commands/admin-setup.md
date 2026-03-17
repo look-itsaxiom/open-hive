@@ -1,5 +1,5 @@
 ---
-name: setup
+name: admin-setup
 description: Deploy and configure an Open Hive backend instance — prerequisites, env config, build, and start
 allowed-tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "AskUserQuestion"]
 ---
